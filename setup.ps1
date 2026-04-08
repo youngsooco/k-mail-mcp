@@ -120,50 +120,26 @@ function Set-ApiKey {
     Write-Host $L_API_HDR -ForegroundColor Yellow
     Write-Host $L_API_NOTE -ForegroundColor DarkGray
 
-    $cfgPath = Find-ConfigPath
-    if (-not $cfgPath) {
-        Write-Host $L_API_NOCFG -ForegroundColor Red
-        return
-    }
+    # 현재 키 상태 확인 (setup-worker.js 통해 복호화)
+    $env:KMAIL_INPUT = "{}"
+    $status = & node "$ScriptDir\setup-worker.js" "get-api-key-status"
+    $env:KMAIL_INPUT = $null
+    Write-Host "  $L_API_CUR : $status" -ForegroundColor $(if ($status -match "활성|active") { "Green" } else { "DarkGray" })
 
-    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    $mcpNode = $cfg.mcpServers.PSObject.Properties["k-mail-mcp"]?.Value
-    if (-not $mcpNode) {
-        Write-Host $L_API_NOMCP -ForegroundColor Red
-        return
-    }
-
-    # 현재 키 상태 표시 (마스킹)
-    $currentKey = $mcpNode.env?.ANTHROPIC_API_KEY
-    if ($currentKey) {
-        $masked = $currentKey.Substring(0, [Math]::Min(12, $currentKey.Length)) + "****"
-        Write-Host "  $L_API_CUR : [활성] $masked" -ForegroundColor Green
-    } else {
-        Write-Host "  $L_API_CUR : [비활성 — Haiku 판단 꺼짐]" -ForegroundColor DarkGray
-    }
-
-    # 키 입력 (SecureString)
+    # 키 입력 (SecureString — 화면에 표시 안 됨)
     $secKey = Read-Host $L_API_KEY -AsSecureString
     $newKey = Get-PlainText $secKey
 
-    # env 노드 없으면 생성
-    if (-not $mcpNode.PSObject.Properties["env"]) {
-        $mcpNode | Add-Member -NotePropertyName "env" -NotePropertyValue ([PSCustomObject]@{}) -Force
-    }
-
-    if ($newKey.Trim() -eq "") {
-        # 키 제거
-        $mcpNode.env.PSObject.Properties.Remove("ANTHROPIC_API_KEY")
-        Write-Host $L_API_CLR -ForegroundColor Yellow
-    } else {
-        $mcpNode.env | Add-Member -NotePropertyName "ANTHROPIC_API_KEY" -NotePropertyValue $newKey.Trim() -Force
-        Write-Host $L_API_SAV -ForegroundColor Green
-    }
-
-    # BOM 없이 저장
-    $json = $cfg | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding $false))
+    # setup-worker.js 로 암호화 저장 (settings.enc.json)
+    $data = @{ key = $newKey.Trim() }
+    $result = Invoke-Worker "set-api-key" $data
     $newKey = $null
+    [GC]::Collect()
+    Write-Host $result -ForegroundColor $(if ($result -match "\[OK\]") { "Green" } else { "Yellow" })
+
+    if ($result -match "\[OK\].*저장|saved") {
+        Write-Host "  → claude_desktop_config.json 수정 불필요. 바로 적용됩니다." -ForegroundColor DarkGray
+    }
 }
 
 function Add-Account {

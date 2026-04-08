@@ -25,6 +25,7 @@ const ACCOUNTS_FILE  = path.join(__dirname, "accounts.enc.json");
 const KEY_FILE       = path.join(__dirname, ".master.key");
 const META_FILE      = path.join(__dirname, ".instance.json");
 const LAST_RUN_FILE  = path.join(__dirname, "last_run.json");
+const SETTINGS_FILE  = path.join(__dirname, "settings.enc.json");
 
 // ══════════════════════════════════════════════════════
 //  인스턴스 / 키 / 계정
@@ -49,6 +50,26 @@ function decrypt(enc, keyBuf) {
   } catch {
     throw new Error("복호화 실패");
   }
+}
+
+
+// ══════════════════════════════════════════════════════
+//  API 키 로드 (settings.enc.json 우선, 없으면 env 폴백)
+//  API 키는 AES-256-GCM 암호화로 settings.enc.json 에 저장
+//  (setup.bat 5번 메뉴로 관리, claude_desktop_config.json 에 평문 저장 안 함)
+// ══════════════════════════════════════════════════════
+function loadApiKey() {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const keyBuf  = loadKeyBuf();
+      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
+      if (settings.encApiKey) {
+        return decrypt(settings.encApiKey, keyBuf).trim();
+      }
+    }
+  } catch {}
+  // 폴백: 환경변수 (수동 설정 시)
+  return process.env.ANTHROPIC_API_KEY || "";
 }
 
 function loadAccounts() {
@@ -319,7 +340,7 @@ function authLabel(auth) {
 //  경계 구간(15~75점) 메일만 호출 → API 비용 최소화
 //  ANTHROPIC_API_KEY 환경변수 필요
 // ══════════════════════════════════════════════════════
-const HAIKU_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const HAIKU_API_KEY = loadApiKey();
 const HAIKU_ENABLED = HAIKU_API_KEY.length > 10;
 
 async function claudeHaikuJudge(from, subject, snippet) {

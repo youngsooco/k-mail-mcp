@@ -13,6 +13,7 @@ const __dirname      = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE  = path.join(__dirname, "accounts.enc.json");
 const KEY_FILE       = path.join(__dirname, ".master.key");
 const META_FILE      = path.join(__dirname, ".instance.json");
+const SETTINGS_FILE  = path.join(__dirname, "settings.enc.json");
 
 // ── 로케일 감지 ──────────────────────────────────────────────────
 function detectKorean() {
@@ -137,6 +138,40 @@ async function main() {
     const removed = accounts.splice(n, 1)[0];
     saveRaw(accounts);
     console.log(`[${T('삭제됨', 'DELETED')}] ${removed.label}`);
+
+  } else if (action === "set-api-key") {
+    // API 키를 AES-256-GCM 으로 암호화해 settings.enc.json 에 저장
+    const settings = fs.existsSync(SETTINGS_FILE)
+      ? JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"))
+      : {};
+
+    if (input.key && input.key.trim()) {
+      settings.encApiKey = encrypt(input.key.trim(), keyBuf);
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), { mode: 0o600 });
+      console.log(T(
+        "[OK] API 키가 암호화되어 settings.enc.json 에 저장됐습니다.",
+        "[OK] API key encrypted and saved to settings.enc.json"
+      ));
+    } else {
+      delete settings.encApiKey;
+      fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), { mode: 0o600 });
+      console.log(T(
+        "[OK] API 키가 제거됐습니다. Claude Haiku 판단이 비활성화됩니다.",
+        "[OK] API key removed. Claude Haiku judgment disabled."
+      ));
+    }
+
+  } else if (action === "get-api-key-status") {
+    // 키 등록 여부만 확인 (복호화 안 함)
+    const settings = fs.existsSync(SETTINGS_FILE)
+      ? JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"))
+      : {};
+    if (settings.encApiKey) {
+      const preview = decrypt(settings.encApiKey, keyBuf).substring(0, 12) + "****";
+      console.log(T(`[활성] ${preview}`, `[active] ${preview}`));
+    } else {
+      console.log(T("[비활성]", "[disabled]"));
+    }
   }
 }
 
