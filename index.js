@@ -141,7 +141,7 @@ function fetchHeadersAndSnippets(imap, uids) {
     const bag = new Map(); // uid → { parts, attrs }
 
     const f = imap.fetch(uids, {
-      bodies: [HEADER_FIELDS, "BODY[TEXT]<0.900>"],
+      bodies: [HEADER_FIELDS, "BODY.PEEK[TEXT]"],
       struct: true,
     });
 
@@ -171,7 +171,7 @@ function fetchHeadersAndSnippets(imap, uids) {
 
           // 스니펫 정제
           // QP(quoted-printable) 소프트 줄바꿈 제거, HTML 태그 제거, 공백 정리
-          const rawSnippet = (item.parts["BODY[TEXT]<0.900>"] || Buffer.alloc(0))
+          const rawSnippet = (item.parts["BODY.PEEK[TEXT]"] || item.parts["BODY[TEXT]<0.900>"] || Buffer.alloc(0))
             .toString("utf-8");
           const snippet = rawSnippet
             .replace(/=\r?\n/g, "")          // QP 연속 줄
