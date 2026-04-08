@@ -10,7 +10,8 @@ if ((Get-Culture).Name -like "ko*") {
     $L_MENU1   = "  1) 계정 추가 / 수정"
     $L_MENU2   = "  2) 계정 목록"
     $L_MENU3   = "  3) 계정 삭제"
-    $L_MENU4   = "  4) 종료"
+    $L_MENU4   = "  4) AI 스팸 필터 설정 (Claude Haiku API 키)"
+    $L_MENU5   = "  5) 종료"
     $L_ADD_HDR = "-- 계정 추가 / 수정 --"
     $L_SVC     = "  서비스"
     $L_EMAIL   = "  이메일 주소"
@@ -26,7 +27,6 @@ if ((Get-Culture).Name -like "ko*") {
     $L_SELECT  = "  선택"
     $L_INVALID = "잘못된 선택입니다."
     $L_BYE     = "종료합니다."
-    $L_MENU5   = "  5) AI 스팸 필터 설정 (Claude Haiku API 키)"
     $L_API_HDR = "-- AI 스팸 필터 설정 (Claude Haiku) --"
     $L_API_CUR = "  현재 상태"
     $L_API_KEY = "  API 키 입력 (비워두면 비활성화)"
@@ -40,7 +40,8 @@ if ((Get-Culture).Name -like "ko*") {
     $L_MENU1   = "  1) Add / Update account"
     $L_MENU2   = "  2) List accounts"
     $L_MENU3   = "  3) Delete account"
-    $L_MENU4   = "  4) Exit"
+    $L_MENU4   = "  4) AI Spam Filter (Claude Haiku API Key)"
+    $L_MENU5   = "  5) Exit"
     $L_ADD_HDR = "-- Add / Update Account --"
     $L_SVC     = "  Service"
     $L_EMAIL   = "  Email address"
@@ -56,7 +57,6 @@ if ((Get-Culture).Name -like "ko*") {
     $L_SELECT  = "  Select"
     $L_INVALID = "Invalid selection"
     $L_BYE     = "Goodbye!"
-    $L_MENU5   = "  5) AI Spam Filter (Claude Haiku API Key)"
     $L_API_HDR = "-- AI Spam Filter (Claude Haiku) --"
     $L_API_CUR = "  Current status"
     $L_API_KEY = "  API Key (leave blank to disable)"
@@ -75,11 +75,20 @@ function Show-Header {
 }
 
 function Show-Menu {
+    # API 키 상태 실시간 조회
+    $env:KMAIL_INPUT = "{}"
+    $apiStatus = & node "$ScriptDir\setup-worker.js" "get-api-key-status" 2>$null
+    $env:KMAIL_INPUT = $null
+
+    $apiColor  = if ($apiStatus -match "활성|active") { "Green" } else { "DarkGray" }
+    $apiSuffix = if ($apiStatus) { "  ($apiStatus)" } else { "" }
+
     Write-Host ""
     Write-Host $L_MENU1
     Write-Host $L_MENU2
     Write-Host $L_MENU3
-    Write-Host $L_MENU4
+    Write-Host -NoNewline $L_MENU4
+    Write-Host $apiSuffix -ForegroundColor $apiColor
     Write-Host $L_MENU5
     Write-Host ""
 }
@@ -209,8 +218,8 @@ while ($running) {
         "1" { Add-Account }
         "2" { List-Accounts }
         "3" { Remove-Account }
-        "4" { $running = $false }
-        "5" { Set-ApiKey }
+        "4" { Set-ApiKey }
+        "5" { $running = $false }
         default { Write-Host $L_INVALID -ForegroundColor Red }
     }
 }
