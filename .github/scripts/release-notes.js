@@ -1,108 +1,66 @@
-// .github/scripts/release-notes.js
-const https = require("https");
-const fs    = require("fs");
+// .github/scripts/release-notes.js — ES Module
+import https from "https";
+import fs   from "fs";
 
 const {
-  ANTHROPIC_API_KEY,
-  GITHUB_TOKEN,
-  CURRENT_TAG,
-  PREV_TAG,
-  REPO_OWNER,
-  REPO_NAME,
+  ANTHROPIC_API_KEY, GITHUB_TOKEN,
+  CURRENT_TAG, PREV_TAG, REPO_OWNER, REPO_NAME,
 } = process.env;
 
-function callClaude(system, user) {
-  const body = JSON.stringify({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 1024,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: "api.anthropic.com",
-      path: "/v1/messages",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => {
-        if (res.statusCode !== 200) { reject(new Error(`Claude API ${res.statusCode}: ${data}`)); return; }
-        resolve(JSON.parse(data).content?.[0]?.text || "릴리즈 노트 생성 실패");
-      });
-    });
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
-
-function githubPost(path, body) {
+function post(hostname, path, headers, body) {
   const payload = JSON.stringify(body);
-  return new Promise((resolve, reject) => {
+  return new Promise((res, rej) => {
     const req = https.request({
-      hostname: "api.github.com",
-      path,
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        "Content-Type": "application/json",
-        "User-Agent": "k-mail-mcp-bot",
-        Accept: "application/vnd.github+json",
-        "Content-Length": Buffer.byteLength(payload),
-      },
-    }, (res) => {
-      let data = "";
-      res.on("data", c => data += c);
-      res.on("end", () => resolve({ status: res.statusCode, body: data }));
+      hostname, path, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload), ...headers },
+    }, (r) => {
+      let d = "";
+      r.on("data", c => d += c);
+      r.on("end", () => res({ status: r.statusCode, body: d }));
     });
-    req.on("error", reject);
+    req.on("error", rej);
     req.write(payload);
     req.end();
   });
 }
 
+async function callClaude(system, user) {
+  const r = await post("api.anthropic.com", "/v1/messages",
+    { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    { model: "claude-sonnet-4-20250514", max_tokens: 1024, system, messages: [{ role: "user", content: user }] }
+  );
+  if (r.status !== 200) throw new Error(`Claude API ${r.status}: ${r.body}`);
+  return JSON.parse(r.body).content?.[0]?.text || "생성 실패";
+}
+
+async function githubPost(path, body) {
+  return post("api.github.com", path,
+    { Authorization: `Bearer ${GITHUB_TOKEN}`, "User-Agent": "k-mail-mcp-bot", Accept: "application/vnd.github+json" },
+    body
+  );
+}
+
 async function main() {
   const prevTag = PREV_TAG || "첫 릴리즈";
-  const commits = fs.existsSync("/tmp/commits.txt")
-    ? fs.readFileSync("/tmp/commits.txt", "utf-8").trim() : "(없음)";
+  const commits = fs.existsSync("/tmp/commits.txt") ? fs.readFileSync("/tmp/commits.txt", "utf-8").trim() : "(없음)";
+  console.log(`릴리즈 노트: ${CURRENT_TAG}`);
 
-  console.log(`릴리즈 노트 생성: ${CURRENT_TAG}`);
-
-  const system = `Write release notes in Korean for K-Mail-MCP based on git commits.
-
-Format:
-## 변경사항
-### ✨ 새 기능
-### 🐛 버그 수정
-### 🔐 보안
-### 📖 문서
-(빈 섹션 생략)
-
-Rules: user-facing descriptions, not raw commit messages. Max 300 words.`;
-
-  const user = `Release: ${CURRENT_TAG} (from ${prevTag})\nCommits:\n${commits}`;
-
+  const system = `Write Korean release notes for K-Mail-MCP.
+Format: ## 변경사항 with ### ✨ 새 기능 / 🐛 버그 수정 / 🔐 보안 / 📖 문서 (skip empty). Max 300 words.`;
+  const user   = `Release: ${CURRENT_TAG} (from ${prevTag})\nCommits:\n${commits}`;
   const notes  = await callClaude(system, user);
+
   const compare = PREV_TAG
     ? `https://github.com/${REPO_OWNER}/${REPO_NAME}/compare/${PREV_TAG}...${CURRENT_TAG}`
     : `https://github.com/${REPO_OWNER}/${REPO_NAME}/commits/${CURRENT_TAG}`;
 
-  const releaseBody = `${notes}\n\n---\n**설치:** [INSTALL_GUIDE.md](https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/main/INSTALL_GUIDE.md)\n**전체 변경사항:** [${prevTag}...${CURRENT_TAG}](${compare})`;
-
   const r = await githubPost(
     `/repos/${REPO_OWNER}/${REPO_NAME}/releases`,
     {
-      tag_name:   CURRENT_TAG,
-      name:       `K-Mail-MCP ${CURRENT_TAG}`,
-      body:       releaseBody,
-      draft:      false,
+      tag_name: CURRENT_TAG,
+      name: `K-Mail-MCP ${CURRENT_TAG}`,
+      body: `${notes}\n\n---\n**설치:** [INSTALL_GUIDE.md](https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/main/INSTALL_GUIDE.md)\n**전체 변경사항:** [${prevTag}...${CURRENT_TAG}](${compare})`,
+      draft: false,
       prerelease: CURRENT_TAG.includes("-"),
     }
   );
