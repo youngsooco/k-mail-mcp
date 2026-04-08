@@ -26,25 +26,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Get PR diff
         run: |
           git diff origin/${{ github.base_ref }}...HEAD --name-only > /tmp/changed_files.txt
           git diff origin/${{ github.base_ref }}...HEAD -- '*.js' '*.json' | head -c 8000 > /tmp/pr_diff.txt
-          echo "Changed files:"
-          cat /tmp/changed_files.txt
 
       - name: Review PR
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
-          CHANGED_FILES_PATH: /tmp/changed_files.txt
-          DIFF_PATH: /tmp/pr_diff.txt
         run: node .github/scripts/pr-review.js
