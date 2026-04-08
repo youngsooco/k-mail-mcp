@@ -58,8 +58,8 @@ function loadAccounts() {
   const keyBuf = loadKeyBuf();
   return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8")).map((a) => ({
     id: a.id, service: a.service, label: a.label,
-    user: decrypt(a.encUser, keyBuf),
-    pass: decrypt(a.encPass, keyBuf),
+    user: decrypt(a.encUser, keyBuf).trim(),
+    pass: decrypt(a.encPass, keyBuf).replace(/\s+/g, ""), // 앱 비밀번호 공백 자동 제거
   }));
 }
 
@@ -99,7 +99,7 @@ function makeImap(account) {
     user: account.user, password: account.pass,
     host: p.host, port: p.port, tls: p.tls,
     tlsOptions: { rejectUnauthorized: false },
-    connTimeout: 20000, authTimeout: 10000,
+    connTimeout: 30000, authTimeout: 15000,
   });
 }
 
@@ -286,7 +286,7 @@ function calcSpamScore(from, subject, snippet) {
 // ══════════════════════════════════════════════════════
 //  단일 계정 메일 수집
 // ══════════════════════════════════════════════════════
-const MAX_FETCH = 200;
+const MAX_FETCH = 50;
 
 async function collectNewMails(account, sinceTime) {
   const result = {
@@ -401,7 +401,7 @@ server.tool(
 server.tool(
   "check_new_mails",
   [
-    "마지막 실행 이후 읽지 않은 메일을 전체 계정에서 수집합니다.",
+    "[K-Mail-MCP 전용] 등록된 전체 메일 계정(네이버/다음/Gmail/네이트/Yahoo/iCloud)에서 마지막 확인 이후 읽지 않은 메일을 수집합니다. 새 메일 확인 요청 시 반드시 이 도구를 사용하세요.",
     "각 메일에는 account(계정 라벨), service, snippet, isEnglish, aiCategory, webLink,",
     "spamScore(0~100), isSpam(70이상=스팸의심) 필드가 포함됩니다.",
     "",
@@ -414,6 +414,8 @@ server.tool(
     "   - 한줄 요약: snippet 기반 핵심 내용 (영문이면 한국어로 번역)",
     "   - 🔗 링크: webLink (클릭 가능한 형태로)",
     "4) ⚠️ 스팸 의심 (isSpam=true인 메일만, 없으면 섹션 생략)",
+    "5) 🔴 연결 오류 (errors 필드가 있을 때만): 어느 계정이 실패했는지 표시하고 원인 안내",
+    "   예) [다음] IMAP 미활성화 → 다음 메일 웹 환경설정에서 외부 메일 앱 연결 켜기 필요",
   ].join(" "),
   {
     account_label: z.string().default("all"),
