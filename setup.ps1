@@ -1,25 +1,67 @@
-# K-Mail-MCP Account Setup (PowerShell)
-# Password input with masking via Read-Host -AsSecureString
+﻿# K-Mail-MCP Account Setup (PowerShell)
 [Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding            = [System.Text.Encoding]::UTF8
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$isKorean  = (Get-Culture).Name -like "ko*"
-function T($ko, $en) { if ($isKorean) { $ko } else { $en } }
+
+# ── 로케일 감지 → 언어 변수 일괄 정의 ────────────────────────────
+if ((Get-Culture).Name -like "ko*") {
+    $L_TITLE   = "한국 메일 MCP - 계정 설정"
+    $L_MENU1   = "  1) 계정 추가 / 수정"
+    $L_MENU2   = "  2) 계정 목록"
+    $L_MENU3   = "  3) 계정 삭제"
+    $L_MENU4   = "  4) 종료"
+    $L_ADD_HDR = "-- 계정 추가 / 수정 --"
+    $L_SVC     = "  서비스"
+    $L_EMAIL   = "  이메일 주소"
+    $L_PASS    = "  계정 비밀번호"
+    $L_CONF    = "  비밀번호 확인"
+    $L_NOTE    = "  [안내] 2단계 인증 사용 시: 보안 설정의 앱 비밀번호 입력"
+    $L_LABEL   = "  라벨 (예: 다음개인)"
+    $L_MISMATCH= "  [ERROR] 비밀번호가 일치하지 않습니다. 다시 입력해주세요."
+    $L_SHORT   = "  [ERROR] 비밀번호가 너무 짧습니다."
+    $L_INV_EMAIL="[ERROR] 올바른 이메일 형식이 아닙니다"
+    $L_LIST_HDR= "-- 등록된 계정 --"
+    $L_DEL_NUM = "  삭제할 번호"
+    $L_SELECT  = "  선택"
+    $L_INVALID = "잘못된 선택입니다."
+    $L_BYE     = "종료합니다."
+} else {
+    $L_TITLE   = "Korean Mail MCP - Account Setup"
+    $L_MENU1   = "  1) Add / Update account"
+    $L_MENU2   = "  2) List accounts"
+    $L_MENU3   = "  3) Delete account"
+    $L_MENU4   = "  4) Exit"
+    $L_ADD_HDR = "-- Add / Update Account --"
+    $L_SVC     = "  Service"
+    $L_EMAIL   = "  Email address"
+    $L_PASS    = "  Account password"
+    $L_CONF    = "  Confirm password"
+    $L_NOTE    = "  [Note] If 2FA is enabled: use the app password from security settings"
+    $L_LABEL   = "  Label (e.g. daum-personal)"
+    $L_MISMATCH= "  [ERROR] Passwords do not match. Please try again."
+    $L_SHORT   = "  [ERROR] Password too short."
+    $L_INV_EMAIL="[ERROR] Invalid email format"
+    $L_LIST_HDR= "-- Registered Accounts --"
+    $L_DEL_NUM = "  Number to delete"
+    $L_SELECT  = "  Select"
+    $L_INVALID = "Invalid selection"
+    $L_BYE     = "Goodbye!"
+}
 
 function Show-Header {
     Write-Host ""
     Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host "   $(T \"한국 메일 MCP - 계정 설정\" \"Korean Mail MCP - Account Setup\")" -ForegroundColor Cyan
+    Write-Host "   $L_TITLE" -ForegroundColor Cyan
     Write-Host "============================================" -ForegroundColor Cyan
 }
 
 function Show-Menu {
     Write-Host ""
-    Write-Host "  1) $(T \"계정 추가 / 수정\" \"Add / Update account\")"
-    Write-Host "  2) $(T \"계정 목록\" \"List accounts\")"
-    Write-Host "  3) $(T \"계정 삭제\" \"Delete account\")"
-    Write-Host "  4) $(T \"종료\" \"Exit\")"
+    Write-Host $L_MENU1
+    Write-Host $L_MENU2
+    Write-Host $L_MENU3
+    Write-Host $L_MENU4
     Write-Host ""
 }
 
@@ -31,7 +73,6 @@ function Get-PlainText($secureString) {
 
 function Invoke-Worker($action, $data) {
     $json = $data | ConvertTo-Json -Compress
-    # 환경변수로 전달 (파일/파이프 인코딩 문제 완전 우회)
     $env:KMAIL_INPUT = $json
     $result = & node "$ScriptDir\setup-worker.js" $action
     $env:KMAIL_INPUT = $null
@@ -40,29 +81,28 @@ function Invoke-Worker($action, $data) {
 
 function Add-Account {
     Write-Host ""
-    Write-Host "-- $(T \"계정 추가 / 수정\" \"Add / Update Account\") --" -ForegroundColor Yellow
+    Write-Host $L_ADD_HDR -ForegroundColor Yellow
     Write-Host "  1) Naver  2) Daum/Kakao  3) Gmail  4) Nate  5) Yahoo  6) iCloud"
-    $svc = Read-Host "  $(T \"서비스\" \"Service\")"
+    $svc = Read-Host $L_SVC
 
-    $email = Read-Host "  $(T \"이메일 주소\" \"Email address\")"
+    $email = Read-Host $L_EMAIL
     if (-not $email.Contains("@")) {
-        Write-Host "[ERROR] $(T \"올바른 이메일 형식이 아닙니다\" \"Invalid email format\")" -ForegroundColor Red
+        Write-Host $L_INV_EMAIL -ForegroundColor Red
         return
     }
 
-    Write-Host "  [Note] If 2FA is enabled: use the app password from security settings, not your login password" -ForegroundColor DarkGray
-    # 2-step password input to prevent typos (*** masking)
+    Write-Host $L_NOTE -ForegroundColor DarkGray
     $matched = $false
     $pass = ""
     while (-not $matched) {
-        $secPass1 = Read-Host "  $(T \"계정 비밀번호\" \"Account password\")" -AsSecureString
-        $secPass2 = Read-Host "  $(T "비밀번호 확인" "Confirm password")" -AsSecureString
+        $secPass1 = Read-Host $L_PASS -AsSecureString
+        $secPass2 = Read-Host $L_CONF -AsSecureString
         $p1 = Get-PlainText $secPass1
         $p2 = Get-PlainText $secPass2
         if ($p1 -ne $p2) {
-            Write-Host "  [ERROR] $(T "비밀번호가 일치하지 않습니다." "Passwords do not match.")" -ForegroundColor Red
+            Write-Host $L_MISMATCH -ForegroundColor Red
         } elseif ($p1.Length -lt 4) {
-            Write-Host "  [ERROR] $(T "비밀번호가 너무 짧습니다." "Password too short.")" -ForegroundColor Red
+            Write-Host $L_SHORT -ForegroundColor Red
         } else {
             $pass = $p1
             $matched = $true
@@ -70,50 +110,47 @@ function Add-Account {
         $p1 = $null; $p2 = $null
     }
 
-    $label = Read-Host "  $(T \"라벨 (예: 다음개인)\" \"Label (e.g. daum-personal)\")"
+    $label = Read-Host $L_LABEL
     if (-not $label) { $label = $email.Split("@")[0] }
 
     $data = @{ action="add"; service=$svc; email=$email; pass=$pass; label=$label }
     $result = Invoke-Worker "add" $data
-
-    # Immediately clear password from memory
     $pass = $null
     [GC]::Collect()
-
     Write-Host $result -ForegroundColor Green
 }
 
 function List-Accounts {
     $result = Invoke-Worker "list" @{}
     Write-Host ""
-    Write-Host "-- $(T \"등록된 계정\" \"Registered Accounts\") --" -ForegroundColor Yellow
+    Write-Host $L_LIST_HDR -ForegroundColor Yellow
     Write-Host $result
 }
 
 function Remove-Account {
     List-Accounts
-    $idx = Read-Host "  $(T \"삭제할 번호\" \"Number to delete\")"
+    $idx = Read-Host $L_DEL_NUM
     $data = @{ index=[int]$idx }
     $result = Invoke-Worker "delete" $data
     Write-Host $result -ForegroundColor Yellow
 }
 
-# Main
+# ── Main ──────────────────────────────────────────────────────────
 Show-Header
 
 $running = $true
 while ($running) {
     Show-Menu
-    $choice = Read-Host "  $(T \"선택\" \"Select\")"
+    $choice = Read-Host $L_SELECT
     switch ($choice.Trim()) {
         "1" { Add-Account }
         "2" { List-Accounts }
         "3" { Remove-Account }
         "4" { $running = $false }
-        default { Write-Host "$(T \"잘못된 선택입니다.\" \"Invalid selection\")" -ForegroundColor Red }
+        default { Write-Host $L_INVALID -ForegroundColor Red }
     }
 }
 
 Write-Host ""
-Write-Host "$(T \"종료합니다.\" \"Goodbye!\")" -ForegroundColor Cyan
+Write-Host $L_BYE -ForegroundColor Cyan
 Write-Host ""
