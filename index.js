@@ -1,8 +1,12 @@
 /**
- * Korean Mail MCP Server v1.0.2
+ * Korean Mail MCP Server v1.1.0
  *
  * 지원: 네이버 / 다음 / Gmail / 네이트 / Yahoo / iCloud
- * 특징: snippet 미리보기, Gmail 딥링크, 카테고리 분류, 스팸 점수
+ * 스팸 탐지 3단계:
+ *   1) 패턴 매칭 (regex)
+ *   2) DNSBL (Spamhaus DBL — 도메인 평판)
+ *   3) SPF / DKIM / DMARC 헤더 인증
+ *   4) Claude Haiku AI 판단 (경계 구간만)
  */
 
 import { McpServer }            from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -11,6 +15,7 @@ import { z }                    from "zod";
 import Imap                     from "imap";
 import { simpleParser }         from "mailparser";
 import crypto                   from "crypto";
+import dns                      from "dns";
 import fs                       from "fs";
 import path                     from "path";
 import { fileURLToPath }        from "url";
@@ -42,7 +47,7 @@ function decrypt(enc, keyBuf) {
     d.setAuthTag(Buffer.from(enc.authTag, "hex"));
     return Buffer.concat([d.update(Buffer.from(enc.ciphertext, "hex")), d.final()]).toString("utf-8");
   } catch {
-    throw new Error("복호화 실패 — 이 인스턴스의 키로 암호화된 데이터인지 확인하세요.");
+    throw new Error("복호화 실패");
   }
 }
 
@@ -52,12 +57,12 @@ function loadAccounts() {
   return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8")).map((a) => ({
     id: a.id, service: a.service, label: a.label,
     user: decrypt(a.encUser, keyBuf).trim(),
-    pass: decrypt(a.encPass, keyBuf).replace(/\s+/g, ""), // 앱 비밀번호 공백 자동 제거
+    pass: decrypt(a.encPass, keyBuf).replace(/\s+/g, ""),
   }));
 }
 
 // ══════════════════════════════════════════════════════
-//  last_run 관리
+//  last_run
 // ══════════════════════════════════════════════════════
 function loadLastRun()     { try { return JSON.parse(fs.readFileSync(LAST_RUN_FILE, "utf-8")); } catch { return {}; } }
 function saveLastRun(data) { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(data, null, 2)); }
@@ -65,7 +70,7 @@ function saveLastRun(data) { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(data
 function getLastRunFor(id) {
   const d = loadLastRun()[id];
   if (d) return new Date(d);
-  const t = new Date(); t.setDate(t.getDate() - 7); return t; // 신규 계정 기본 7일
+  const t = new Date(); t.setDate(t.getDate() - 7); return t;
 }
 
 function updateLastRunFor(id, ts = new Date()) {
@@ -73,7 +78,7 @@ function updateLastRunFor(id, ts = new Date()) {
 }
 
 // ══════════════════════════════════════════════════════
-//  IMAP 프리셋 & 연결 헬퍼
+//  IMAP 프리셋
 // ══════════════════════════════════════════════════════
 const PRESETS = {
   naver:  { host: "imap.naver.com",      port: 993, tls: true },
@@ -83,7 +88,6 @@ const PRESETS = {
   yahoo:  { host: "imap.mail.yahoo.com", port: 993, tls: true },
   icloud: { host: "imap.mail.me.com",    port: 993, tls: true },
 };
-
 const DAUM_INBOX_CANDIDATES = ["INBOX", "받은메일함", "전체메일"];
 
 function makeImap(account) {
@@ -105,43 +109,26 @@ function imapConnect(imap) {
     imap.connect();
   });
 }
-
 function openBox(imap, name) {
-  return new Promise((res, rej) =>
-    imap.openBox(name, true, (e, b) => e ? rej(e) : res(b))
-  );
+  return new Promise((res, rej) => imap.openBox(name, true, (e, b) => e ? rej(e) : res(b)));
 }
-
 function listBoxes(imap) {
-  return new Promise((res, rej) =>
-    imap.getBoxes((e, boxes) => e ? rej(e) : res(Object.keys(boxes)))
-  );
+  return new Promise((res, rej) => imap.getBoxes((e, b) => e ? rej(e) : res(Object.keys(b))));
 }
-
 function searchImap(imap, criteria) {
-  return new Promise((res, rej) =>
-    imap.search(criteria, (e, u) => e ? rej(e) : res(u || []))
-  );
+  return new Promise((res, rej) => imap.search(criteria, (e, u) => e ? rej(e) : res(u || [])));
 }
 
 // ══════════════════════════════════════════════════════
-//  헤더 + 본문 스니펫 fetch
-//  bodies: [""] = 전체 메시지 → simpleParser로 한 번에 파싱
-//  - struct: false (UID FETCH 방지)
-//  - seqno를 bag 키로 직접 사용 (search 반환값과 일치)
-//  - bag.entries() 순회 (lookup 불일치 방지)
-//  - 개별 메시지 파싱 오류는 무시하고 계속 진행
+//  Fetch
 // ══════════════════════════════════════════════════════
+const HEADER_FIELDS = "HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE MESSAGE-ID X-ORIGINAL-TO)";
+
 function fetchHeadersAndSnippets(imap, seqnos) {
   return new Promise((res, rej) => {
     if (!seqnos.length) { res([]); return; }
-
-    const bag = new Map(); // seqno → { raw: Buffer, attrs: {} }
-
-    const f = imap.fetch(seqnos, {
-      bodies: [""],  // "" = BODY.PEEK[] = 전체 메시지 (가장 호환성 높음)
-      struct: false,
-    });
+    const bag = new Map();
+    const f = imap.fetch(seqnos, { bodies: [""], struct: false });
 
     f.on("message", (msg, seqno) => {
       const parts = {}; let attrs = {};
@@ -154,36 +141,24 @@ function fetchHeadersAndSnippets(imap, seqnos) {
       msg.once("end", () => bag.set(seqno, { parts, attrs }));
     });
 
-    // 개별 메시지 오류 무시 (전체 중단 방지)
     f.on("error", (e) => console.error("[FETCH warn]", e.message));
 
     f.once("end", async () => {
       try {
         const results = [];
-        // bag을 직접 순회 (seqno lookup 불일치 원천 차단)
         for (const [seqno, item] of bag) {
           try {
             const raw = item.parts[""] || Buffer.alloc(0);
             const m   = await simpleParser(raw);
-
-            // 스니펫: text 우선, 없으면 html→텍스트 변환
-            const textBody = m.text
-              || (m.html ? m.html.replace(/<[^>]{0,500}>/g, " ") : "");
-            const snippet = textBody
-              .replace(/\s+/g, " ")
-              .trim()
-              .substring(0, 400);
-
+            const textBody = m.text || (m.html ? m.html.replace(/<[^>]{0,500}>/g, " ") : "");
+            const snippet  = textBody.replace(/\s+/g, " ").trim().substring(0, 400);
             results.push({
-              seqno,
-              m,
+              seqno, m,
               flags:     item.attrs.flags || [],
               snippet,
               messageId: (m.messageId || "").replace(/[<>]/g, "").trim(),
             });
-          } catch (e) {
-            console.error("[msg parse error]", seqno, e.message);
-          }
+          } catch (e) { console.error("[msg parse]", seqno, e.message); }
         }
         res(results);
       } catch (e) { rej(e); }
@@ -191,25 +166,15 @@ function fetchHeadersAndSnippets(imap, seqnos) {
   });
 }
 
-// ── 전체 본문 fetch (read_email 전용) ─────────────────
 function fetchFullBody(imap, uid) {
   return new Promise((res, rej) => {
     const chunks = [];
     const f = imap.fetch([uid], { bodies: "", struct: false });
-
-    f.on("message", (msg) =>
-      msg.on("body", (s) => {
-        s.on("data", (c) => chunks.push(c));
-      })
-    );
-
-    // 오류 시 reject (promie hang 방지)
+    f.on("message", (msg) => msg.on("body", (s) => s.on("data", (c) => chunks.push(c))));
     f.once("error", (e) => rej(e));
-
     f.once("end", async () => {
-      if (chunks.length === 0) { rej(new Error("메일을 찾을 수 없습니다")); return; }
-      try { res(await simpleParser(Buffer.concat(chunks))); }
-      catch (e) { rej(e); }
+      if (!chunks.length) { rej(new Error("메일을 찾을 수 없습니다")); return; }
+      try { res(await simpleParser(Buffer.concat(chunks))); } catch (e) { rej(e); }
     });
   });
 }
@@ -219,18 +184,12 @@ function toImapDate(d) {
   return `${d.getDate()}-${M[d.getMonth()]}-${d.getFullYear()}`;
 }
 
-// ══════════════════════════════════════════════════════
-//  웹 링크
-// ══════════════════════════════════════════════════════
 function buildWebLink(service, messageId) {
   if (service === "gmail" && messageId)
     return `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
-  if (service === "naver")  return "https://mail.naver.com/";
-  if (service === "daum")   return "https://mail.daum.net/";
-  if (service === "nate")   return "https://mail.nate.com/";
-  if (service === "yahoo")  return "https://mail.yahoo.com/";
-  if (service === "icloud") return "https://www.icloud.com/mail/";
-  return null;
+  const links = { naver:"https://mail.naver.com/", daum:"https://mail.daum.net/",
+    nate:"https://mail.nate.com/", yahoo:"https://mail.yahoo.com/", icloud:"https://www.icloud.com/mail/" };
+  return links[service] || null;
 }
 
 // ══════════════════════════════════════════════════════
@@ -249,13 +208,12 @@ const CATEGORY_RULES = [
 ];
 
 function classifyEmail(from, subject, isNewsletter) {
-  for (const r of CATEGORY_RULES)
-    if (r.test(from, subject, isNewsletter)) return r.name;
+  for (const r of CATEGORY_RULES) if (r.test(from, subject, isNewsletter)) return r.name;
   return isNewsletter ? "📰 뉴스/미디어" : "📂 기타";
 }
 
 // ══════════════════════════════════════════════════════
-//  스팸 점수 (0~100)
+//  ① 패턴 기반 스팸 점수 (기존)
 // ══════════════════════════════════════════════════════
 const SPAM_PATTERNS = [
   { re: /당첨|무료\s*증정|사은품|경품\s*당첨|축하.*당첨/i,      score: 40 },
@@ -270,14 +228,165 @@ const SPAM_PATTERNS = [
   { re: /카드.*정보.*유출|개인정보.*유출.*확인/i,                  score: 60 },
 ];
 
-function calcSpamScore(from, subject, snippet) {
+function calcPatternScore(from, subject, snippet) {
   let score = 0;
   const text = `${from} ${subject} ${snippet}`;
-  for (const { re, score: s } of SPAM_PATTERNS)
-    if (re.test(text)) score += s;
+  for (const { re, score: s } of SPAM_PATTERNS) if (re.test(text)) score += s;
   if ((subject.match(/[!！★◆●▶♠♣]/g) || []).length > 2) score += 20;
   if (/no-?reply|noreply/i.test(from) && /할인|쿠폰|이벤트|무료|당첨/i.test(subject)) score += 25;
   return Math.min(score, 100);
+}
+
+// ══════════════════════════════════════════════════════
+//  ② DNSBL — Spamhaus DBL (도메인 평판)
+//  zen.spamhaus.org → IP 기반 / dbl.spamhaus.org → 도메인 기반
+//  개인 비상업용 무료, DNS 쿼리 방식
+// ══════════════════════════════════════════════════════
+const dnsblCache = new Map(); // 도메인 → 점수 (세션 내 캐시)
+
+function extractSenderDomain(from) {
+  const m = from.match(/@([\w.-]+)/);
+  return m ? m[1].toLowerCase().replace(/[^\w.-]/g, "") : "";
+}
+
+async function checkDNSBL(domain) {
+  if (!domain || domain.length > 100 || !domain.includes(".")) return 0;
+  if (dnsblCache.has(domain)) return dnsblCache.get(domain);
+
+  const lookup = (host) => new Promise((res) => {
+    const timer = setTimeout(() => res([]), 3000); // 3초 타임아웃
+    dns.resolve4(host, (err, addrs) => {
+      clearTimeout(timer);
+      res(err ? [] : (addrs || []));
+    });
+  });
+
+  // DBL: 도메인 평판 블랙리스트
+  // 127.0.1.2 = spam domain, 127.0.1.4 = phishing, 127.0.1.5 = malware, 127.0.1.6 = botnet C&C
+  const dblAddrs = await lookup(`${domain}.dbl.spamhaus.org`);
+  const onDBL = dblAddrs.some(a => /^127\.0\.1\.[2-9]$/.test(a));
+
+  const score = onDBL ? 60 : 0;
+  dnsblCache.set(domain, score);
+  return score;
+}
+
+// ══════════════════════════════════════════════════════
+//  ③ SPF / DKIM / DMARC 헤더 인증 파싱
+//  Authentication-Results 헤더에서 추출
+//  이미 배달된 메일의 수신서버 인증 결과를 분석
+// ══════════════════════════════════════════════════════
+function parseAuthResults(m) {
+  // Authentication-Results 헤더 추출 (복수 가능)
+  let raw = m.headers?.get("authentication-results") || "";
+  if (Array.isArray(raw)) raw = raw[0] || ""; // 첫 번째 = 수신 서버 결과
+  const h = (typeof raw === "object" ? raw.value || raw.text || "" : String(raw)).toLowerCase();
+
+  const get = (key) => {
+    const m = h.match(new RegExp(`\\b${key}=(pass|fail|softfail|none|neutral|temperror|permerror|bestguesspass)\\b`));
+    return m ? m[1] : null;
+  };
+
+  return {
+    spf:   get("spf"),
+    dkim:  get("dkim"),
+    dmarc: get("dmarc"),
+  };
+}
+
+function calcAuthScore(auth) {
+  let score = 0;
+  // SPF: 발신 도메인이 메일 서버를 허가했는지
+  if (auth.spf === "fail")     score += 35;
+  else if (auth.spf === "softfail") score += 15;
+  // DKIM: 발신자가 메일에 서명했는지
+  if (auth.dkim === "fail")    score += 30;
+  // DMARC: SPF+DKIM 기반 도메인 정책
+  if (auth.dmarc === "fail")   score += 25;
+  return Math.min(score, 70);
+}
+
+function authLabel(auth) {
+  const parts = [];
+  if (auth.spf)   parts.push(`SPF:${auth.spf}`);
+  if (auth.dkim)  parts.push(`DKIM:${auth.dkim}`);
+  if (auth.dmarc) parts.push(`DMARC:${auth.dmarc}`);
+  return parts.join(" | ") || "인증정보없음";
+}
+
+// ══════════════════════════════════════════════════════
+//  ④ Claude Haiku AI 스팸 판단
+//  경계 구간(15~75점) 메일만 호출 → API 비용 최소화
+//  ANTHROPIC_API_KEY 환경변수 필요
+// ══════════════════════════════════════════════════════
+const HAIKU_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const HAIKU_ENABLED = HAIKU_API_KEY.length > 10;
+
+async function claudeHaikuJudge(from, subject, snippet) {
+  if (!HAIKU_ENABLED) return null;
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": HAIKU_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 120,
+        system: "You are an email spam classifier. Respond with JSON only, no markdown, no extra text.",
+        messages: [{
+          role: "user",
+          content: `이 이메일이 스팸/피싱인지 판단해줘.
+JSON으로만 응답: {"isSpam": true/false, "confidence": 0-100, "reason": "한줄이유"}
+
+발신: ${from}
+제목: ${subject}
+내용 미리보기: ${snippet.substring(0, 250)}`,
+        }],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const text = (data.content?.[0]?.text || "").trim();
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  통합 스팸 점수 계산
+//  4단계 신호를 가중 합산 → 최종 0~100점
+// ══════════════════════════════════════════════════════
+function buildSpamSignals(patternScore, authScore, dnsblScore, aiResult) {
+  return {
+    pattern: patternScore,      // 키워드 패턴
+    auth:    authScore,          // SPF/DKIM/DMARC
+    dnsbl:   dnsblScore,         // Spamhaus DBL
+    ai:      aiResult ? {
+      isSpam:     aiResult.isSpam,
+      confidence: aiResult.confidence,
+      reason:     aiResult.reason,
+    } : null,
+  };
+}
+
+function calcFinalSpamScore(patternScore, authScore, dnsblScore, aiResult) {
+  let score = Math.min(patternScore + authScore + dnsblScore, 100);
+
+  if (aiResult) {
+    if (aiResult.isSpam && aiResult.confidence > 60) {
+      // AI가 스팸 확신 → 점수 상향
+      score = Math.min(score + Math.round(aiResult.confidence * 0.25), 100);
+    } else if (!aiResult.isSpam && aiResult.confidence > 70) {
+      // AI가 정상 확신 → 점수 하향 (false positive 방지)
+      score = Math.max(score - 20, 0);
+    }
+  }
+
+  return score;
 }
 
 // ══════════════════════════════════════════════════════
@@ -295,7 +404,6 @@ async function collectNewMails(account, sinceTime) {
   try {
     await imapConnect(imap);
 
-    // 다음 수신함 자동 감지 (최상위 폴더만)
     let mailboxName = "INBOX";
     if (account.service === "daum") {
       const boxes = await listBoxes(imap);
@@ -313,13 +421,11 @@ async function collectNewMails(account, sinceTime) {
 
     const items = await fetchHeadersAndSnippets(imap, seqnos);
 
-    for (const { seqno, m, flags, snippet, messageId } of items) {
+    // ── 1단계: 기본 필드 추출 (동기) ─────────────────
+    const mailData = items.map(({ seqno, m, flags, snippet, messageId }) => {
       const mailDate = m.date ? new Date(m.date) : null;
-
-      // 날짜 2차 필터 (IMAP SINCE가 날짜 단위이므로 보정)
-      if (mailDate && mailDate <= sinceTime) continue;
-      // UNSEEN 검색 결과이지만 혹시 \Seen 플래그 있으면 제외
-      if (flags.includes("\\Seen")) continue;
+      if (mailDate && mailDate <= sinceTime) return null;
+      if (flags.includes("\\Seen")) return null;
 
       const from         = m.from?.text || "";
       const subject      = m.subject   || "(제목 없음)";
@@ -328,24 +434,63 @@ async function collectNewMails(account, sinceTime) {
       const isEnglish    = snippet.length > 20 &&
         (snippet.match(/[a-zA-Z]/g) || []).length / snippet.length > 0.6;
 
-      const spamScore = calcSpamScore(from, subject, snippet);
+      const auth         = parseAuthResults(m);
+      const patternScore = calcPatternScore(from, subject, snippet);
+      const authScore    = calcAuthScore(auth);
+      const domain       = extractSenderDomain(from);
+
+      return { seqno, mailDate, from, subject, snippet, messageId,
+        isNewsletter, originalTo, isEnglish, auth, patternScore, authScore, domain };
+    }).filter(Boolean);
+
+    // ── 2단계: DNSBL 병렬 조회 ───────────────────────
+    const dnsblResults = await Promise.all(
+      mailData.map(d => checkDNSBL(d.domain))
+    );
+
+    // ── 3단계: pre-AI 점수 계산 → 경계구간 식별 ──────
+    const preScores = mailData.map((d, i) =>
+      Math.min(d.patternScore + d.authScore + dnsblResults[i], 100)
+    );
+
+    // ── 4단계: Claude Haiku 병렬 호출 (경계구간만) ───
+    //  15~75점 구간: 명백한 스팸/정상 외 판단 필요
+    const haikuResults = await Promise.all(
+      mailData.map((d, i) => {
+        const pre = preScores[i];
+        return (pre >= 15 && pre < 75)
+          ? claudeHaikuJudge(d.from, d.subject, d.snippet)
+          : Promise.resolve(null);
+      })
+    );
+
+    // ── 5단계: 최종 점수 합산 → 결과 저장 ───────────
+    for (let i = 0; i < mailData.length; i++) {
+      const d          = mailData[i];
+      const dnsblScore = dnsblResults[i];
+      const aiResult   = haikuResults[i];
+
+      const spamScore  = calcFinalSpamScore(d.patternScore, d.authScore, dnsblScore, aiResult);
+      const signals    = buildSpamSignals(d.patternScore, d.authScore, dnsblScore, aiResult);
+
       result.mails.push({
-        uid:         seqno,
-        from,
-        subject,
-        date:        mailDate?.toISOString() || "",
-        snippet,
-        isEnglish,
-        aiCategory:  classifyEmail(from, subject, isNewsletter),
-        mailRef:     mailboxName + (originalTo ? ` → ${originalTo}` : ""),
-        isNewsletter,
-        webLink:     buildWebLink(account.service, messageId),
+        uid:         d.seqno,
+        from:        d.from,
+        subject:     d.subject,
+        date:        d.mailDate?.toISOString() || "",
+        snippet:     d.snippet,
+        isEnglish:   d.isEnglish,
+        aiCategory:  classifyEmail(d.from, d.subject, d.isNewsletter),
+        mailRef:     mailboxName + (d.originalTo ? ` → ${d.originalTo}` : ""),
+        isNewsletter: d.isNewsletter,
+        webLink:     buildWebLink(account.service, d.messageId),
         spamScore,
         isSpam:      spamScore >= 70,
+        spamSignals: signals,                         // 신호별 점수 상세
+        authLabel:   authLabel(d.auth),               // "SPF:pass | DKIM:pass | DMARC:pass"
       });
     }
 
-    // 날짜 내림차순 정렬 (날짜 없는 메일은 맨 뒤)
     result.mails.sort((a, b) => {
       if (!a.date && !b.date) return 0;
       if (!a.date) return 1;
@@ -364,7 +509,7 @@ async function collectNewMails(account, sinceTime) {
 // ══════════════════════════════════════════════════════
 //  MCP 서버
 // ══════════════════════════════════════════════════════
-const server = new McpServer({ name: "korean-mail-mcp", version: "1.0.2" });
+const server = new McpServer({ name: "korean-mail-mcp", version: "1.1.0" });
 
 // ── Tool 1: 계정 목록 ─────────────────────────────────
 server.tool(
@@ -381,20 +526,13 @@ server.tool(
     const accounts = raw.map((a) => {
       let userDisplay = "(복호화 실패)";
       try { userDisplay = decrypt(a.encUser, keyBuf); } catch {}
-      return {
-        id: a.id, service: a.service, label: a.label,
-        user: userDisplay,
-        lastRun:   lastRuns[a.id]  || null,
-        updatedAt: a.updatedAt     || null,
-      };
+      return { id: a.id, service: a.service, label: a.label,
+        user: userDisplay, lastRun: lastRuns[a.id] || null, updatedAt: a.updatedAt || null };
     });
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({ instanceId: instanceId.slice(0,8)+"...", accounts }),
-      }],
-    };
+    return { content: [{ type: "text",
+      text: JSON.stringify({ instanceId: instanceId.slice(0,8)+"...", accounts,
+        haikuEnabled: HAIKU_ENABLED }) }] };
   }
 );
 
@@ -403,20 +541,19 @@ server.tool(
   "check_new_mails",
   [
     "[K-Mail-MCP 전용] 등록된 전체 메일 계정(네이버/다음/Gmail/네이트/Yahoo/iCloud)에서 마지막 확인 이후 읽지 않은 메일을 수집합니다. 새 메일 확인 요청 시 반드시 이 도구를 사용하세요.",
-    "각 메일에는 account(계정 라벨), service, snippet, isEnglish, aiCategory, webLink,",
-    "spamScore(0~100), isSpam(70이상=스팸의심) 필드가 포함됩니다.",
+    "각 메일에는 account, service, snippet, isEnglish, aiCategory, webLink, spamScore(0~100), isSpam(70이상), spamSignals(패턴/DNSBL/인증/AI 신호 상세), authLabel(SPF/DKIM/DMARC 결과) 필드가 포함됩니다.",
     "",
     "반드시 아래 형식으로 출력하세요:",
     "1) 📋 오늘의 메일 요약 — 총 N통, 카테고리별 건수, 긴급/중요 메일 핵심 1-2줄 요약",
     "2) 🔴 즉시 확인 필요 — 마감/보안/결제 관련 메일 강조",
     "3) 📧 전체 메일 목록 — 각 메일마다:",
     "   - [계정라벨] 발신자 — 제목 (날짜)",
-    "   - 카테고리: aiCategory 값",
-    "   - 한줄 요약: snippet 기반 핵심 내용 (영문이면 한국어로 번역)",
-    "   - 🔗 링크: webLink (클릭 가능한 형태로)",
+    "   - 카테고리: aiCategory값 | authLabel(SPF/DKIM/DMARC 상태)",
+    "   - 한줄 요약: snippet 기반 (영문이면 한국어로 번역)",
+    "   - 🔗 링크: webLink",
     "4) ⚠️ 스팸 의심 (isSpam=true인 메일만, 없으면 섹션 생략)",
-    "5) 🔴 연결 오류 (errors 필드가 있을 때만): 어느 계정이 실패했는지 표시하고 원인 안내",
-    "   예) [다음] IMAP 미활성화 → 다음 메일 웹 환경설정에서 외부 메일 앱 연결 켜기 필요",
+    "   - 각 스팸 메일: 발신자, 제목, spamSignals 요약 (어떤 신호로 탐지됐는지)",
+    "5) 🔴 연결 오류 (errors 필드가 있을 때만)",
   ].join(" "),
   {
     account_label:   z.string().default("all"),
@@ -425,24 +562,20 @@ server.tool(
   },
   async ({ account_label, override_since, max_per_account }) => {
     const allAccounts = loadAccounts();
-    if (!allAccounts.length) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음. setup.bat(Windows) 또는 ./setup.sh(macOS) 실행 필요" }) }] };
-    }
+    if (!allAccounts.length)
+      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음. setup.bat 실행 필요" }) }] };
 
     const targets = account_label === "all"
       ? allAccounts
-      : allAccounts.filter((a) => a.label === account_label || a.user === account_label);
-
-    if (!targets.length) {
+      : allAccounts.filter(a => a.label === account_label || a.user === account_label);
+    if (!targets.length)
       return { content: [{ type: "text", text: JSON.stringify({ error: `계정 '${account_label}' 없음` }) }] };
-    }
 
     const runAt = new Date();
-
     const settled = await Promise.allSettled(
-      targets.map((acc) => {
+      targets.map(acc => {
         const sinceTime = override_since ? new Date(override_since) : getLastRunFor(acc.id);
-        return collectNewMails(acc, sinceTime).then((r) => {
+        return collectNewMails(acc, sinceTime).then(r => {
           if (!r.error) updateLastRunFor(acc.id, runAt);
           return r;
         });
@@ -450,17 +583,12 @@ server.tool(
     );
 
     const results = settled.map((s, i) =>
-      s.status === "fulfilled"
-        ? s.value
+      s.status === "fulfilled" ? s.value
         : { accountLabel: targets[i].label, error: s.reason?.message, mails: [] }
     );
 
     const allMails = results
-      .flatMap((r) =>
-        r.mails.slice(0, max_per_account).map((m) => ({
-          ...m, account: r.accountLabel, mailbox: r.mailbox,
-        }))
-      )
+      .flatMap(r => r.mails.slice(0, max_per_account).map(m => ({ ...m, account: r.accountLabel, mailbox: r.mailbox })))
       .sort((a, b) => {
         if (!a.date && !b.date) return 0;
         if (!a.date) return 1;
@@ -472,23 +600,19 @@ server.tool(
       acc[m.aiCategory] = (acc[m.aiCategory] || 0) + 1; return acc;
     }, {});
 
-    const errors = results
-      .filter((r) => r.error)
-      .map((r) => ({ account: r.accountLabel, error: r.error }));
+    const spamCount = allMails.filter(m => m.isSpam).length;
+    const errors = results.filter(r => r.error).map(r => ({ account: r.accountLabel, error: r.error }));
 
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          runAt:           runAt.toISOString(),
-          totalMails:      allMails.length,
-          englishMails:    allMails.filter((m) => m.isEnglish).length,
-          categorySummary,
-          mails:           allMails,
-          errors:          errors.length ? errors : undefined,
-        }, null, 2),
-      }],
-    };
+    return { content: [{ type: "text", text: JSON.stringify({
+      runAt:           runAt.toISOString(),
+      totalMails:      allMails.length,
+      englishMails:    allMails.filter(m => m.isEnglish).length,
+      spamCount,
+      categorySummary,
+      haikuEnabled:    HAIKU_ENABLED,
+      mails:           allMails,
+      errors:          errors.length ? errors : undefined,
+    }, null, 2) }] };
   }
 );
 
@@ -496,23 +620,14 @@ server.tool(
 server.tool(
   "read_email",
   "특정 메일의 전체 본문을 읽습니다. 영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요.",
-  {
-    account_label: z.string(),
-    uid:           z.number(),
-    mailbox:       z.string().default("INBOX"),
-  },
+  { account_label: z.string(), uid: z.number(), mailbox: z.string().default("INBOX") },
   async ({ account_label, uid, mailbox }) => {
-    const acc = loadAccounts().find(
-      (a) => a.label === account_label || a.user === account_label
-    );
-    if (!acc) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
-    }
+    const acc = loadAccounts().find(a => a.label === account_label || a.user === account_label);
+    if (!acc) return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
 
     const imap = makeImap(acc);
     try {
       await imapConnect(imap);
-
       let mailboxName = mailbox;
       if (acc.service === "daum" && mailbox === "INBOX") {
         const boxes = await listBoxes(imap);
@@ -520,31 +635,18 @@ server.tool(
           if (boxes.includes(c)) { mailboxName = c; break; }
       }
       await openBox(imap, mailboxName);
-
-      const msg  = await fetchFullBody(imap, uid);
-      const body = msg.text
-        || (msg.html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-        || "(본문 없음)";
-
+      const msg = await fetchFullBody(imap, uid);
+      const body = msg.text || (msg.html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "(본문 없음)";
       const messageId = (msg.messageId || "").replace(/[<>]/g, "").trim();
-      const isEnglish = body.length > 20 &&
-        (body.match(/[a-zA-Z]/g) || []).length / Math.min(body.length, 500) > 0.6;
+      const isEnglish = body.length > 20 && (body.match(/[a-zA-Z]/g) || []).length / Math.min(body.length, 500) > 0.6;
 
-      return {
-        content: [{
-          type: "text",
-          text: JSON.stringify({
-            account:   acc.label,
-            uid,
-            from:      msg.from?.text || "",
-            subject:   msg.subject    || "",
-            date:      msg.date?.toISOString() || "",
-            isEnglish,
-            body:      body.substring(0, 5000),
-            webLink:   buildWebLink(acc.service, messageId),
-          }),
-        }],
-      };
+      return { content: [{ type: "text", text: JSON.stringify({
+        account: acc.label, uid,
+        from: msg.from?.text || "", subject: msg.subject || "",
+        date: msg.date?.toISOString() || "",
+        isEnglish, body: body.substring(0, 5000),
+        webLink: buildWebLink(acc.service, messageId),
+      }) }] };
     } finally {
       try { imap.end(); } catch {}
     }
@@ -555,42 +657,25 @@ server.tool(
 server.tool(
   "reset_last_run",
   "마지막 실행 시각 초기화 또는 특정 시각으로 설정합니다.",
-  {
-    account_label: z.string().default("all"),
-    set_to: z.string().default("").describe("ISO 8601. 비우면 7일 전"),
-  },
+  { account_label: z.string().default("all"), set_to: z.string().default("").describe("ISO 8601. 비우면 7일 전") },
   async ({ account_label, set_to }) => {
     const accounts = loadAccounts();
-    const targets  = account_label === "all"
-      ? accounts
-      : accounts.filter((a) => a.label === account_label || a.user === account_label);
-
-    const ts = set_to ? new Date(set_to) : (() => {
-      const d = new Date(); d.setDate(d.getDate() - 7); return d;
-    })();
-
-    targets.forEach((a) => updateLastRunFor(a.id, ts));
-    return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({ updated: targets.map((a) => a.label), setTo: ts.toISOString() }),
-      }],
-    };
+    const targets  = account_label === "all" ? accounts
+      : accounts.filter(a => a.label === account_label || a.user === account_label);
+    const ts = set_to ? new Date(set_to) : (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d; })();
+    targets.forEach(a => updateLastRunFor(a.id, ts));
+    return { content: [{ type: "text", text: JSON.stringify({ updated: targets.map(a => a.label), setTo: ts.toISOString() }) }] };
   }
 );
 
 // ── Tool 5: 메일함 목록 ───────────────────────────────
 server.tool(
   "list_mailboxes",
-  "IMAP 폴더 목록을 반환합니다. 다음 수신함 폴더명 확인에 유용합니다.",
+  "IMAP 폴더 목록을 반환합니다.",
   { account_label: z.string() },
   async ({ account_label }) => {
-    const acc = loadAccounts().find(
-      (a) => a.label === account_label || a.user === account_label
-    );
-    if (!acc) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
-    }
+    const acc = loadAccounts().find(a => a.label === account_label || a.user === account_label);
+    if (!acc) return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
     const imap = makeImap(acc);
     try {
       await imapConnect(imap);
