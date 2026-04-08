@@ -175,13 +175,11 @@ function fetchHeadersAndSnippets(imap, seqnos) {
           // 전체 본문에서 스니펫 추출
           const rawSnippet = (item.parts[""] || Buffer.alloc(0)).toString("utf-8");
           const snippet = rawSnippet
-            .replace(/=
-?
-/g, "")           // QP 연속 줄
-            .replace(/=[0-9A-Fa-f]{2}/g, " ") // QP 인코딩 문자
+            .replace(/=[\r\n]+/g, "")          // QP 연속 줄
+            .replace(/=[0-9A-Fa-f]{2}/g, " ")  // QP 인코딩 문자
             .replace(/<[^>]{0,200}>/g, " ")    // HTML 태그
             .replace(/&[a-z]{2,6};/gi, " ")    // HTML 엔티티
-            .replace(/https?:\/\/\S+/g, "")    // URL 제거
+            .replace(/https?:\/\/\S+/g, "")   // URL 제거
             .replace(/\s+/g, " ")
             .trim()
             .substring(0, 400);
