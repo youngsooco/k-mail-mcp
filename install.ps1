@@ -1,107 +1,126 @@
-# K-Mail-MCP Installer — PowerShell (Node.js 불필요)
+﻿# K-Mail-MCP Installer - PowerShell
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$ErrorActionPreference = "Stop"
+$OutputEncoding            = [System.Text.Encoding]::UTF8
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$isKorean  = (Get-Culture).Name -like "ko*"
-function T($ko, $en) { if ($isKorean) { $ko } else { $en } }
+
+# ── 로케일 감지 → 언어 변수 일괄 정의 ────────────────────────────
+if ((Get-Culture).Name -like "ko*") {
+    $L_TITLE    = "K-Mail-MCP 자동 설치"
+    $L_OK_NODE  = "[OK] Node.js"
+    $L_ERR_NODE = "[ERROR] Node.js가 설치되어 있지 않습니다. https://nodejs.org 에서 v20 이상을 설치하세요."
+    $L_OLD_NODE = "[ERROR] Node.js 버전이 너무 낮습니다. v18 이상이 필요합니다. https://nodejs.org"
+    $L_STEP1    = "[1/3] 패키지 설치 중..."
+    $L_OK1      = "[OK] 패키지 설치 완료"
+    $L_STEP2    = "[2/3] Claude Desktop 설정 파일 탐색 중..."
+    $L_STEP3    = "[3/3] Claude Desktop 설정 업데이트 중..."
+    $L_DONE     = "설치 완료!"
+    $L_NEXT1    = "  1. 메일 계정 등록:"
+    $L_NEXT1B   = "     setup.bat"
+    $L_NEXT2    = "  2. Claude Desktop 완전 종료 후 재시작"
+    $L_NEXT3    = "  3. Claude에게 말해보세요:"
+    $L_NEXT3B   = '     "새 메일 확인해줘"'
+    $L_ENTER    = "Enter 키를 눌러 종료"
+    $L_ERR_CFG  = "[ERROR] Claude Desktop 설정 파일을 찾을 수 없습니다. Claude Desktop이 설치되어 있는지 확인하세요."
+} else {
+    $L_TITLE    = "K-Mail-MCP Auto Installer"
+    $L_OK_NODE  = "[OK] Node.js"
+    $L_ERR_NODE = "[ERROR] Node.js not found. Install v20+ from https://nodejs.org"
+    $L_OLD_NODE = "[ERROR] Node.js version too old. v18+ required. https://nodejs.org"
+    $L_STEP1    = "[1/3] Installing packages..."
+    $L_OK1      = "[OK] Packages installed"
+    $L_STEP2    = "[2/3] Finding Claude Desktop config..."
+    $L_STEP3    = "[3/3] Updating Claude Desktop config..."
+    $L_DONE     = "Install Complete!"
+    $L_NEXT1    = "  1. Register mail account:"
+    $L_NEXT1B   = "     setup.bat"
+    $L_NEXT2    = "  2. Fully close and restart Claude Desktop"
+    $L_NEXT3    = "  3. Ask Claude:"
+    $L_NEXT3B   = '     "Check my new emails"'
+    $L_ENTER    = "Press Enter to exit"
+    $L_ERR_CFG  = "[ERROR] Claude Desktop config not found. Make sure Claude Desktop is installed."
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "   K-Mail-MCP Auto Installer" -ForegroundColor Cyan
+Write-Host "   $L_TITLE" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host ""
 
 # Node.js 확인
 try {
     $nodeVer = & node --version 2>&1
-    # 버전 숫자 추출 (v20.1.0 → 20)
-    $verNum = [int]($nodeVer -replace "v(\d+)\..*", '$1')
+    $verNum  = [int]($nodeVer -replace "v(\d+)\..*", '$1')
     if ($verNum -lt 18) {
-        Write-Host "[ERROR] Node.js $nodeVer is too old. Please install v18 or later from https://nodejs.org" -ForegroundColor Red
-        Read-Host ""; exit 1
+        Write-Host $L_OLD_NODE -ForegroundColor Red
+        Read-Host $L_ENTER
+        exit 1
     }
-    Write-Host "[OK] Node.js $nodeVer" -ForegroundColor Green
+    Write-Host "$L_OK_NODE $nodeVer" -ForegroundColor Green
 } catch {
-    Write-Host "[ERROR] Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
-    Read-Host ""; exit 1
+    Write-Host $L_ERR_NODE -ForegroundColor Red
+    Read-Host $L_ENTER
+    exit 1
 }
 
-# npm install
-Write-Host ""
-Write-Host "[1/3] $(T "패키지 설치 중..." "Installing packages...")" -ForegroundColor Yellow
+# 패키지 설치
+Write-Host $L_STEP1
 Set-Location $ScriptDir
 & npm install --silent
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] npm install failed" -ForegroundColor Red
-    Read-Host ""; exit 1
+    Read-Host $L_ENTER
+    exit 1
 }
-Write-Host "[OK] $(T "패키지 설치 완료" "Packages installed")" -ForegroundColor Green
+Write-Host $L_OK1 -ForegroundColor Green
 
-# Claude Desktop config 경로 탐색
-Write-Host ""
-Write-Host "[2/3] $(T "Claude Desktop 설정 파일 탐색 중..." "Finding Claude Desktop config...")" -ForegroundColor Yellow
-
-$candidates = @(
-    "$env:APPDATA\Claude",
-    "$env:LOCALAPPDATA\Claude",
-    "$env:APPDATA\Anthropic\Claude"
+# Claude Desktop 설정 탐색
+Write-Host $L_STEP2
+$configPaths = @(
+    "$env:APPDATA\Claude\claude_desktop_config.json",
+    "$env:LOCALAPPDATA\Claude\claude_desktop_config.json",
+    "$env:USERPROFILE\AppData\Roaming\Claude\claude_desktop_config.json"
 )
-$configDir = $null
-foreach ($dir in $candidates) {
-    if (Test-Path $dir) { $configDir = $dir; break }
-}
-if (-not $configDir) {
-    $configDir = "$env:APPDATA\Claude"
-    New-Item -Path $configDir -ItemType Directory -Force | Out-Null
-    Write-Host "[CREATED] $configDir" -ForegroundColor Yellow
-}
-$configFile = Join-Path $configDir "claude_desktop_config.json"
-Write-Host "[OK] Config: $configFile" -ForegroundColor Green
+$configPath = $configPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-# PowerShell 내장 JSON으로 config 업데이트 (Node.js 불필요)
-Write-Host ""
-Write-Host "[3/3] $(T "Claude Desktop 설정 업데이트 중..." "Updating Claude Desktop config...")" -ForegroundColor Yellow
+if (-not $configPath) {
+    $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
+    $configDir  = Split-Path $configPath
+    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir | Out-Null }
+}
+Write-Host "[OK] Config: $configPath" -ForegroundColor Green
 
+# 설정 업데이트
+Write-Host $L_STEP3
 $indexPath = Join-Path $ScriptDir "index.js"
-
-if (Test-Path $configFile) {
-    try {
-        $config = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    } catch {
-        $config = [PSCustomObject]@{}
-    }
-} else {
-    $config = [PSCustomObject]@{}
-}
-
-if (-not $config.PSObject.Properties["mcpServers"]) {
-    $config | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue ([PSCustomObject]@{}) -Force
-}
-
-$serverEntry = [PSCustomObject]@{
+$mcpEntry  = @{
     command = "node"
     args    = @($indexPath)
 }
-$config.mcpServers | Add-Member -NotePropertyName "k-mail-mcp" -NotePropertyValue $serverEntry -Force
 
-$config | ConvertTo-Json -Depth 10 | Set-Content -Path $configFile -Encoding UTF8
+if (Test-Path $configPath) {
+    $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+} else {
+    $cfg = [PSCustomObject]@{}
+}
 
-Write-Host "[OK] Config updated: $configFile" -ForegroundColor Green
+if (-not $cfg.PSObject.Properties["mcpServers"]) {
+    $cfg | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@{})
+}
+$cfg.mcpServers | Add-Member -MemberType NoteProperty -Name "k-mail-mcp" -Value $mcpEntry -Force
+
+$cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+Write-Host "[OK] Config updated: $configPath" -ForegroundColor Green
 
 # 완료
 Write-Host ""
-Write-Host "============================================" -ForegroundColor Green
-Write-Host "   $(T "설치 완료!" "Install Complete!")" -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Green
+Write-Host "============================================" -ForegroundColor Cyan
+Write-Host "   $L_DONE" -ForegroundColor Cyan
+Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "" -ForegroundColor White
-Write-Host "  1. Register mail account:" -ForegroundColor White
-Write-Host "     $(T "     계정 등록:" "     Register account:")" -ForegroundColor Cyan
-Write-Host "     setup.bat (Windows) / ./setup.sh (macOS/Linux)" -ForegroundColor Cyan
+Write-Host $L_NEXT1
+Write-Host $L_NEXT1B -ForegroundColor Yellow
+Write-Host $L_NEXT2
+Write-Host $L_NEXT3
+Write-Host $L_NEXT3B -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  2. $(T "Claude Desktop 완전 종료 후 재시작" "Fully close and restart Claude Desktop")" -ForegroundColor White
-Write-Host ""
-Write-Host "  3. Ask Claude:" -ForegroundColor White
-Write-Host "     Ask: new emails, summarize, unread mail..." -ForegroundColor Cyan
-Write-Host ""
-Read-Host ""
+Read-Host $L_ENTER
