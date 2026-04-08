@@ -1,3 +1,8 @@
+> 🤖 **이 프로젝트는 Claude AI와 함께 유지됩니다.**
+> 이슈를 등록하면 Claude AI가 자동으로 한국어로 답변합니다.
+> PR을 올리면 Claude AI가 보안·버그·성능 관점에서 코드를 리뷰합니다.
+> 최종 머지 결정은 메인테이너(dadfkim)가 합니다.
+
 # K-Mail-MCP 기여 가이드
 
 K-Mail-MCP에 관심을 가져주셔서 감사합니다.  
@@ -38,25 +43,28 @@ const PRESETS = {
 };
 ```
 
-**`setup.js`의 서비스 선택 메뉴에도 추가:**
+**`setup-worker.js`의 서비스 매핑에도 추가:**
 
 ```javascript
-const SERVICES = {
-  "1": "naver",
-  "2": "daum",
-  "3": "gmail",
-  "4": "outlook",  // 추가
-  "5": "yahoo",    // 추가
+// setup-worker.js
+const SVC_MAP = {
+  "1": "naver", "2": "daum",  "3": "gmail",
+  "4": "nate",  "5": "yahoo", "6": "icloud",
+  "7": "outlook",  // 추가 예시
 };
 
 const SVC_LABEL = {
-  naver:   "네이버",
-  daum:    "다음/카카오",
+  naver:   "Naver",
+  daum:    "Daum/Kakao",
   gmail:   "Gmail",
-  outlook: "Outlook/Hotmail",  // 추가
-  yahoo:   "Yahoo Mail",       // 추가
+  nate:    "Nate",
+  yahoo:   "Yahoo",
+  icloud:  "iCloud",
+  outlook: "Outlook/Hotmail",  // 추가 예시
 };
 ```
+
+> setup.ps1 / setup.sh 의 메뉴 문자열도 함께 업데이트하세요.
 
 **딥링크 지원 시 `buildWebLink` 함수에도 추가:**
 
@@ -82,7 +90,7 @@ function buildWebLink(service, messageId) {
 ### Pull Request 절차
 
 1. 저장소 Fork
-2. 기능 브랜치 생성: `git checkout -b feature/add-outlook-support`
+2. 기능 브랜치 생성: `git checkout -b feat/add-outlook-support`
 3. 변경 후 커밋: `git commit -m "feat: add Outlook IMAP support"`
 4. Push: `git push origin feature/add-outlook-support`
 5. Pull Request 생성
