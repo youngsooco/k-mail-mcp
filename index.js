@@ -72,7 +72,7 @@ function saveLastRun(data)    { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(d
 function getLastRunFor(id) {
   const d = loadLastRun()[id];
   if (d) return new Date(d);
-  const t = new Date(); t.setHours(t.getHours() - 24); return t;
+  const t = new Date(); t.setDate(t.getDate() - 7); return t; // 신규 계정 기본 7일
 }
 
 function updateLastRunFor(id, ts = new Date()) {
@@ -129,62 +129,65 @@ function searchImap(imap, criteria) {
 
 // ══════════════════════════════════════════════════════
 //  헤더 + 본문 스니펫 동시 fetch
-//  bodies 배열에 헤더 + BODY[TEXT]<0.900> 함께 요청
+//  - seqno를 키로 사용 (search 반환값과 일치)
+//  - struct: false (UID FETCH 방지)
+//  - 개별 메시지 오류 무시하고 계속 진행
 // ══════════════════════════════════════════════════════
 const HEADER_FIELDS =
   "HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE MESSAGE-ID X-ORIGINAL-TO)";
 
-function fetchHeadersAndSnippets(imap, uids) {
+function fetchHeadersAndSnippets(imap, seqnos) {
   return new Promise((res, rej) => {
-    if (!uids.length) { res([]); return; }
+    if (!seqnos.length) { res([]); return; }
 
-    const bag = new Map(); // uid → { parts, attrs }
+    const bag = new Map(); // seqno → { parts, attrs }
 
-    const f = imap.fetch(uids, {
-      bodies: [HEADER_FIELDS, "BODY.PEEK[TEXT]"],
-      struct: true,
+    const f = imap.fetch(seqnos, {
+      bodies: [HEADER_FIELDS, ""],   // "" = 전체 본문 (BODY.PEEK[])
+      struct: false,
     });
 
-    f.on("message", (msg) => {
+    f.on("message", (msg, seqno) => {   // seqno 직접 사용
       const parts = {}; let attrs = {};
 
       msg.on("body", (stream, info) => {
         const chunks = [];
-        stream.on("data",  (c)  => chunks.push(c));
-        stream.on("end",   ()   => { parts[info.which] = Buffer.concat(chunks); });
+        stream.on("data", (c) => chunks.push(c));
+        stream.on("end",  ()  => { parts[info.which] = Buffer.concat(chunks); });
       });
       msg.once("attributes", (a) => { attrs = a; });
-      msg.once("end", () => bag.set(attrs.uid, { parts, attrs }));
+      msg.once("end", () => bag.set(seqno, { parts, attrs }));
     });
 
-    f.on("error", (e) => { console.error("[FETCH warn]", e.message); });
+    f.on("error", (e) => console.error("[FETCH warn]", e.message));
+
     f.once("end", async () => {
       try {
         const results = [];
-        for (const uid of uids) {
-          const item = bag.get(uid);
+        for (const seqno of seqnos) {
+          const item = bag.get(seqno);
           if (!item) continue;
 
           // 헤더 파싱
           const headerBuf = item.parts[HEADER_FIELDS] || Buffer.alloc(0);
           const m = await simpleParser(headerBuf);
 
-          // 스니펫 정제
-          // QP(quoted-printable) 소프트 줄바꿈 제거, HTML 태그 제거, 공백 정리
-          const rawSnippet = (item.parts["BODY.PEEK[TEXT]"] || item.parts["BODY[TEXT]<0.900>"] || Buffer.alloc(0))
-            .toString("utf-8");
+          // 전체 본문에서 스니펫 추출
+          const rawSnippet = (item.parts[""] || Buffer.alloc(0)).toString("utf-8");
           const snippet = rawSnippet
-            .replace(/=\r?\n/g, "")          // QP 연속 줄
+            .replace(/=
+?
+/g, "")           // QP 연속 줄
             .replace(/=[0-9A-Fa-f]{2}/g, " ") // QP 인코딩 문자
-            .replace(/<[^>]{0,200}>/g, " ")   // HTML 태그
-            .replace(/&[a-z]{2,6};/gi, " ")   // HTML 엔티티
-            .replace(/https?:\/\/\S+/g, "")   // URL 제거
+            .replace(/<[^>]{0,200}>/g, " ")    // HTML 태그
+            .replace(/&[a-z]{2,6};/gi, " ")    // HTML 엔티티
+            .replace(/https?:\/\/\S+/g, "")    // URL 제거
             .replace(/\s+/g, " ")
             .trim()
             .substring(0, 400);
 
           results.push({
-            uid,
+            seqno,
             m,
             flags:     item.attrs.flags || [],
             snippet,
@@ -201,7 +204,7 @@ function fetchHeadersAndSnippets(imap, uids) {
 function fetchFullBody(imap, uid) {
   return new Promise((res, rej) => {
     const chunks = [];
-    const f = imap.fetch([uid], { bodies: "", struct: true });
+    const f = imap.fetch([uid], { bodies: "", struct: false });
     f.on("message", (msg) => msg.on("body", (s) => s.on("data", (c) => chunks.push(c))));
     f.on("error", (e) => { console.error("[FETCH warn]", e.message); });
     f.once("end", async () => {
@@ -318,7 +321,7 @@ async function collectNewMails(account, sinceTime) {
     // 헤더 + 스니펫 동시 fetch
     const items = await fetchHeadersAndSnippets(imap, uids);
 
-    for (const { uid, m, flags, snippet, messageId } of items) {
+    for (const { m, flags, snippet, messageId } of items) {
       const mailDate = m.date ? new Date(m.date) : null;
 
       // datetime 2차 필터 + 읽음 제외
