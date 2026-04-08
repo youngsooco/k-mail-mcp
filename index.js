@@ -1,12 +1,18 @@
 /**
- * Korean Mail MCP Server v1.1.1
+ * Korean Mail MCP Server v1.2.0
  *
  * 지원: 네이버 / 다음 / Gmail / 네이트 / Yahoo / iCloud
- * 스팸 탐지 3단계:
+ * 스팸 탐지 4단계:
  *   1) 패턴 매칭 (regex)
  *   2) DNSBL (Spamhaus DBL — 도메인 평판)
  *   3) SPF / DKIM / DMARC 헤더 인증
  *   4) Claude Haiku AI 판단 (경계 구간만)
+ *
+ * v1.2.0 변경사항:
+ *   - check_new_mails 반환 필드 추가: from_domain, reply_to, reply_to_differs,
+ *     has_tracking_pixel, korean_spam_signals
+ *   - read_email max_chars 파라미터 추가 (기본 5000, -1이면 전체)
+ *   - check_new_mails description 신규 필드 안내 추가
  */
 
 import { McpServer }            from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -55,8 +61,6 @@ function decrypt(enc, keyBuf) {
 
 // ══════════════════════════════════════════════════════
 //  API 키 로드 (settings.enc.json 우선, 없으면 env 폴백)
-//  API 키는 AES-256-GCM 암호화로 settings.enc.json 에 저장
-//  (setup.bat 5번 메뉴로 관리, claude_desktop_config.json 에 평문 저장 안 함)
 // ══════════════════════════════════════════════════════
 function loadApiKey() {
   try {
@@ -68,7 +72,6 @@ function loadApiKey() {
       }
     }
   } catch {}
-  // 폴백: 환경변수 (수동 설정 시)
   return process.env.ANTHROPIC_API_KEY || "";
 }
 
@@ -234,7 +237,7 @@ function classifyEmail(from, subject, isNewsletter) {
 }
 
 // ══════════════════════════════════════════════════════
-//  ① 패턴 기반 스팸 점수 (기존)
+//  ① 패턴 기반 스팸 점수
 // ══════════════════════════════════════════════════════
 const SPAM_PATTERNS = [
   { re: /당첨|무료\s*증정|사은품|경품\s*당첨|축하.*당첨/i,      score: 40 },
@@ -249,6 +252,12 @@ const SPAM_PATTERNS = [
   { re: /카드.*정보.*유출|개인정보.*유출.*확인/i,                  score: 60 },
 ];
 
+// [v1.2.0] 한국어 스팸 시그널 키워드 목록 (개별 감지 반환용)
+const KO_SPAM_SIGNAL_KEYWORDS = [
+  '무료', '당첨', '대출', '이벤트 당첨', '긴급', '즉시',
+  '클릭하세요', '지금 바로', '할인쿠폰', '사은품', '0원',
+];
+
 function calcPatternScore(from, subject, snippet) {
   let score = 0;
   const text = `${from} ${subject} ${snippet}`;
@@ -259,11 +268,9 @@ function calcPatternScore(from, subject, snippet) {
 }
 
 // ══════════════════════════════════════════════════════
-//  ② DNSBL — Spamhaus DBL (도메인 평판)
-//  zen.spamhaus.org → IP 기반 / dbl.spamhaus.org → 도메인 기반
-//  개인 비상업용 무료, DNS 쿼리 방식
+//  ② DNSBL — Spamhaus DBL
 // ══════════════════════════════════════════════════════
-const dnsblCache = new Map(); // 도메인 → 점수 (세션 내 캐시)
+const dnsblCache = new Map();
 
 function extractSenderDomain(from) {
   const m = from.match(/@([\w.-]+)/);
@@ -275,15 +282,13 @@ async function checkDNSBL(domain) {
   if (dnsblCache.has(domain)) return dnsblCache.get(domain);
 
   const lookup = (host) => new Promise((res) => {
-    const timer = setTimeout(() => res([]), 3000); // 3초 타임아웃
+    const timer = setTimeout(() => res([]), 3000);
     dns.resolve4(host, (err, addrs) => {
       clearTimeout(timer);
       res(err ? [] : (addrs || []));
     });
   });
 
-  // DBL: 도메인 평판 블랙리스트
-  // 127.0.1.2 = spam domain, 127.0.1.4 = phishing, 127.0.1.5 = malware, 127.0.1.6 = botnet C&C
   const dblAddrs = await lookup(`${domain}.dbl.spamhaus.org`);
   const onDBL = dblAddrs.some(a => /^127\.0\.1\.[2-9]$/.test(a));
 
@@ -293,14 +298,11 @@ async function checkDNSBL(domain) {
 }
 
 // ══════════════════════════════════════════════════════
-//  ③ SPF / DKIM / DMARC 헤더 인증 파싱
-//  Authentication-Results 헤더에서 추출
-//  이미 배달된 메일의 수신서버 인증 결과를 분석
+//  ③ SPF / DKIM / DMARC 헤더 인증
 // ══════════════════════════════════════════════════════
 function parseAuthResults(m) {
-  // Authentication-Results 헤더 추출 (복수 가능)
   let raw = m.headers?.get("authentication-results") || "";
-  if (Array.isArray(raw)) raw = raw[0] || ""; // 첫 번째 = 수신 서버 결과
+  if (Array.isArray(raw)) raw = raw[0] || "";
   const h = (typeof raw === "object" ? raw.value || raw.text || "" : String(raw)).toLowerCase();
 
   const get = (key) => {
@@ -317,13 +319,10 @@ function parseAuthResults(m) {
 
 function calcAuthScore(auth) {
   let score = 0;
-  // SPF: 발신 도메인이 메일 서버를 허가했는지
-  if (auth.spf === "fail")     score += 35;
+  if (auth.spf === "fail")          score += 35;
   else if (auth.spf === "softfail") score += 15;
-  // DKIM: 발신자가 메일에 서명했는지
-  if (auth.dkim === "fail")    score += 30;
-  // DMARC: SPF+DKIM 기반 도메인 정책
-  if (auth.dmarc === "fail")   score += 25;
+  if (auth.dkim === "fail")         score += 30;
+  if (auth.dmarc === "fail")        score += 25;
   return Math.min(score, 70);
 }
 
@@ -336,13 +335,9 @@ function authLabel(auth) {
 }
 
 // ══════════════════════════════════════════════════════
-//  ④ Claude Haiku AI 스팸 판단
-//  경계 구간(15~75점) 메일만 호출 → API 비용 최소화
-//  ANTHROPIC_API_KEY 환경변수 필요
+//  ④ Claude Haiku AI 스팸 판단 (경계 구간만)
 // ══════════════════════════════════════════════════════
-
 async function claudeHaikuJudge(from, subject, snippet) {
-  // 매 호출마다 동적으로 읽기 → setup.bat 등록 후 재시작 불필요
   const apiKey = loadApiKey();
   if (apiKey.length <= 10) return null;
   try {
@@ -379,13 +374,12 @@ JSON으로만 응답: {"isSpam": true/false, "confidence": 0-100, "reason": "한
 
 // ══════════════════════════════════════════════════════
 //  통합 스팸 점수 계산
-//  4단계 신호를 가중 합산 → 최종 0~100점
 // ══════════════════════════════════════════════════════
 function buildSpamSignals(patternScore, authScore, dnsblScore, aiResult) {
   return {
-    pattern: patternScore,      // 키워드 패턴
-    auth:    authScore,          // SPF/DKIM/DMARC
-    dnsbl:   dnsblScore,         // Spamhaus DBL
+    pattern: patternScore,
+    auth:    authScore,
+    dnsbl:   dnsblScore,
     ai:      aiResult ? {
       isSpam:     aiResult.isSpam,
       confidence: aiResult.confidence,
@@ -399,10 +393,8 @@ function calcFinalSpamScore(patternScore, authScore, dnsblScore, aiResult) {
 
   if (aiResult) {
     if (aiResult.isSpam && aiResult.confidence > 60) {
-      // AI가 스팸 확신 → 점수 상향
       score = Math.min(score + Math.round(aiResult.confidence * 0.25), 100);
     } else if (!aiResult.isSpam && aiResult.confidence > 70) {
-      // AI가 정상 확신 → 점수 하향 (false positive 방지)
       score = Math.max(score - 20, 0);
     }
   }
@@ -460,8 +452,28 @@ async function collectNewMails(account, sinceTime) {
       const authScore    = calcAuthScore(auth);
       const domain       = extractSenderDomain(from);
 
-      return { seqno, mailDate, from, subject, snippet, messageId,
-        isNewsletter, originalTo, isEnglish, auth, patternScore, authScore, domain };
+      // [v1.2.0] reply-to 추출 및 발신자 도용 감지
+      const replyToAddr    = m.replyTo?.value?.[0]?.address || "";
+      const replyToDomain  = replyToAddr ? replyToAddr.split("@")[1]?.toLowerCase() : "";
+      const replyToDiffers = !!(replyToAddr && replyToDomain && replyToDomain !== domain);
+
+      // [v1.2.0] 트래킹 픽셀 감지 (1x1 이미지)
+      const htmlBody = m.html || "";
+      const hasTrackingPixel =
+        /width=["']?1["']?[^>]*height=["']?1["']?/i.test(htmlBody) ||
+        /height=["']?1["']?[^>]*width=["']?1["']?/i.test(htmlBody);
+
+      // [v1.2.0] 한국어 스팸 시그널 — 매칭된 키워드 목록 반환
+      const koreanSpamSignals = KO_SPAM_SIGNAL_KEYWORDS.filter(kw =>
+        subject.includes(kw) || snippet.slice(0, 300).includes(kw)
+      );
+
+      return {
+        seqno, mailDate, from, subject, snippet, messageId,
+        isNewsletter, originalTo, isEnglish, auth, patternScore, authScore, domain,
+        // v1.2.0 추가 필드
+        replyTo: replyToAddr, replyToDiffers, hasTrackingPixel, koreanSpamSignals,
+      };
     }).filter(Boolean);
 
     // ── 2단계: DNSBL 병렬 조회 ───────────────────────
@@ -475,7 +487,6 @@ async function collectNewMails(account, sinceTime) {
     );
 
     // ── 4단계: Claude Haiku 병렬 호출 (경계구간만) ───
-    //  15~75점 구간: 명백한 스팸/정상 외 판단 필요
     const haikuResults = await Promise.all(
       mailData.map((d, i) => {
         const pre = preScores[i];
@@ -507,8 +518,14 @@ async function collectNewMails(account, sinceTime) {
         webLink:     buildWebLink(account.service, d.messageId),
         spamScore,
         isSpam:      spamScore >= 70,
-        spamSignals: signals,                         // 신호별 점수 상세
-        authLabel:   authLabel(d.auth),               // "SPF:pass | DKIM:pass | DMARC:pass"
+        spamSignals: signals,
+        authLabel:   authLabel(d.auth),
+        // [v1.2.0] 신규 필드
+        from_domain:          d.domain,
+        reply_to:             d.replyTo,
+        reply_to_differs:     d.replyToDiffers,
+        has_tracking_pixel:   d.hasTrackingPixel,
+        korean_spam_signals:  d.koreanSpamSignals,
       });
     }
 
@@ -530,7 +547,7 @@ async function collectNewMails(account, sinceTime) {
 // ══════════════════════════════════════════════════════
 //  MCP 서버
 // ══════════════════════════════════════════════════════
-const server = new McpServer({ name: "korean-mail-mcp", version: "1.1.1" });
+const server = new McpServer({ name: "korean-mail-mcp", version: "1.2.0" });
 
 // ── Tool 1: 계정 목록 ─────────────────────────────────
 server.tool(
@@ -563,6 +580,8 @@ server.tool(
   [
     "[K-Mail-MCP 전용] 등록된 전체 메일 계정(네이버/다음/Gmail/네이트/Yahoo/iCloud)에서 마지막 확인 이후 읽지 않은 메일을 수집합니다. 새 메일 확인 요청 시 반드시 이 도구를 사용하세요.",
     "각 메일에는 account, service, snippet, isEnglish, aiCategory, webLink, spamScore(0~100), isSpam(70이상), spamSignals(패턴/DNSBL/인증/AI 신호 상세), authLabel(SPF/DKIM/DMARC 결과) 필드가 포함됩니다.",
+    "v1.2.0 추가 필드: from_domain(발신 도메인), reply_to(회신 주소), reply_to_differs(발신≠회신이면 true — 피싱 주의), has_tracking_pixel(트래킹 픽셀 감지), korean_spam_signals(감지된 한국어 스팸 키워드 목록).",
+    "reply_to_differs=true인 메일은 반드시 ⚠️ 표시하세요. korean_spam_signals가 비어있지 않으면 해당 키워드를 함께 표시하세요.",
     "",
     "반드시 아래 형식으로 출력하세요:",
     "1) 📋 오늘의 메일 요약 — 총 N통, 카테고리별 건수, 긴급/중요 메일 핵심 1-2줄 요약",
@@ -573,7 +592,7 @@ server.tool(
     "   - 한줄 요약: snippet 기반 (영문이면 한국어로 번역)",
     "   - 🔗 링크: webLink",
     "4) ⚠️ 스팸 의심 (isSpam=true인 메일만, 없으면 섹션 생략)",
-    "   - 각 스팸 메일: 발신자, 제목, spamSignals 요약 (어떤 신호로 탐지됐는지)",
+    "   - 각 스팸 메일: 발신자, 제목, spamSignals 요약, korean_spam_signals 목록",
     "5) 🔴 연결 오류 (errors 필드가 있을 때만)",
   ].join(" "),
   {
@@ -640,9 +659,15 @@ server.tool(
 // ── Tool 3: 메일 본문 전체 읽기 ───────────────────────
 server.tool(
   "read_email",
-  "특정 메일의 전체 본문을 읽습니다. 영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요.",
-  { account_label: z.string(), uid: z.number(), mailbox: z.string().default("INBOX") },
-  async ({ account_label, uid, mailbox }) => {
+  "특정 메일의 전체 본문을 읽습니다. 영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요. max_chars로 본문 길이를 제한할 수 있습니다 (기본 5000자, -1이면 전체).",
+  {
+    account_label: z.string(),
+    uid:           z.number(),
+    mailbox:       z.string().default("INBOX"),
+    // [v1.2.0] 본문 최대 길이 파라미터
+    max_chars:     z.number().default(5000).describe("본문 최대 길이 (기본: 5000 / 전체: -1)"),
+  },
+  async ({ account_label, uid, mailbox, max_chars }) => {
     const acc = loadAccounts().find(a => a.label === account_label || a.user === account_label);
     if (!acc) return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
 
@@ -657,15 +682,24 @@ server.tool(
       }
       await openBox(imap, mailboxName);
       const msg = await fetchFullBody(imap, uid);
-      const body = msg.text || (msg.html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "(본문 없음)";
+      const fullBody = msg.text || (msg.html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || "(본문 없음)";
+
+      // [v1.2.0] max_chars 적용
+      const body = (max_chars === -1 || fullBody.length <= max_chars)
+        ? fullBody
+        : fullBody.substring(0, max_chars) +
+          `\n\n...[이하 ${fullBody.length - max_chars}자 생략. max_chars=-1로 재요청하면 전체 본문을 볼 수 있습니다.]`;
+
       const messageId = (msg.messageId || "").replace(/[<>]/g, "").trim();
-      const isEnglish = body.length > 20 && (body.match(/[a-zA-Z]/g) || []).length / Math.min(body.length, 500) > 0.6;
+      const isEnglish = fullBody.length > 20 &&
+        (fullBody.match(/[a-zA-Z]/g) || []).length / Math.min(fullBody.length, 500) > 0.6;
 
       return { content: [{ type: "text", text: JSON.stringify({
         account: acc.label, uid,
         from: msg.from?.text || "", subject: msg.subject || "",
         date: msg.date?.toISOString() || "",
-        isEnglish, body: body.substring(0, 5000),
+        isEnglish, body,
+        total_chars: fullBody.length,
         webLink: buildWebLink(acc.service, messageId),
       }) }] };
     } finally {
