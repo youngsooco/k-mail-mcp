@@ -1,10 +1,8 @@
 /**
- * Korean Mail MCP Server v4
+ * Korean Mail MCP Server v1.0.2
  *
- * 변경사항:
- *  - snippet 필드: 본문 앞 400자 미리보기 (영문 포함 → Claude가 번역+요약)
- *  - webLink 필드: Gmail 딥링크 / 네이버·다음은 받은편지함 URL
- *  - Message-ID 헤더 수집 → Gmail rfc822msgid 검색 URL 생성
+ * 지원: 네이버 / 다음 / Gmail / 네이트 / Yahoo / iCloud
+ * 특징: snippet 미리보기, Gmail 딥링크, 카테고리 분류, 스팸 점수
  */
 
 import { McpServer }            from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -24,7 +22,7 @@ const META_FILE      = path.join(__dirname, ".instance.json");
 const LAST_RUN_FILE  = path.join(__dirname, "last_run.json");
 
 // ══════════════════════════════════════════════════════
-//  인스턴스 / 키
+//  인스턴스 / 키 / 계정
 // ══════════════════════════════════════════════════════
 function getInstanceId() {
   if (!fs.existsSync(META_FILE)) return "unknown";
@@ -40,14 +38,9 @@ function loadKeyBuf() {
 
 function decrypt(enc, keyBuf) {
   try {
-    const d = crypto.createDecipheriv(
-      "aes-256-gcm", keyBuf, Buffer.from(enc.iv, "hex")
-    );
+    const d = crypto.createDecipheriv("aes-256-gcm", keyBuf, Buffer.from(enc.iv, "hex"));
     d.setAuthTag(Buffer.from(enc.authTag, "hex"));
-    return Buffer.concat([
-      d.update(Buffer.from(enc.ciphertext, "hex")),
-      d.final(),
-    ]).toString("utf-8");
+    return Buffer.concat([d.update(Buffer.from(enc.ciphertext, "hex")), d.final()]).toString("utf-8");
   } catch {
     throw new Error("복호화 실패 — 이 인스턴스의 키로 암호화된 데이터인지 확인하세요.");
   }
@@ -66,8 +59,8 @@ function loadAccounts() {
 // ══════════════════════════════════════════════════════
 //  last_run 관리
 // ══════════════════════════════════════════════════════
-function loadLastRun()        { try { return JSON.parse(fs.readFileSync(LAST_RUN_FILE, "utf-8")); } catch { return {}; } }
-function saveLastRun(data)    { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(data, null, 2)); }
+function loadLastRun()     { try { return JSON.parse(fs.readFileSync(LAST_RUN_FILE, "utf-8")); } catch { return {}; } }
+function saveLastRun(data) { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(data, null, 2)); }
 
 function getLastRunFor(id) {
   const d = loadLastRun()[id];
@@ -80,15 +73,15 @@ function updateLastRunFor(id, ts = new Date()) {
 }
 
 // ══════════════════════════════════════════════════════
-//  IMAP 프리셋
+//  IMAP 프리셋 & 연결 헬퍼
 // ══════════════════════════════════════════════════════
 const PRESETS = {
-  naver:  { host: "imap.naver.com",          port: 993, tls: true },
-  daum:   { host: "imap.daum.net",           port: 993, tls: true },
-  gmail:  { host: "imap.gmail.com",          port: 993, tls: true },
-  nate:   { host: "imap.nate.com",           port: 993, tls: true },
-  yahoo:  { host: "imap.mail.yahoo.com",     port: 993, tls: true },
-  icloud: { host: "imap.mail.me.com",        port: 993, tls: true },
+  naver:  { host: "imap.naver.com",      port: 993, tls: true },
+  daum:   { host: "imap.daum.net",       port: 993, tls: true },
+  gmail:  { host: "imap.gmail.com",      port: 993, tls: true },
+  nate:   { host: "imap.nate.com",       port: 993, tls: true },
+  yahoo:  { host: "imap.mail.yahoo.com", port: 993, tls: true },
+  icloud: { host: "imap.mail.me.com",    port: 993, tls: true },
 };
 
 const DAUM_INBOX_CANDIDATES = ["INBOX", "받은메일함", "전체메일"];
@@ -105,7 +98,11 @@ function makeImap(account) {
 
 function imapConnect(imap) {
   return new Promise((res, rej) => {
-    imap.once("ready", res); imap.once("error", rej); imap.connect();
+    const onReady = () => { imap.removeListener("error", onErr); res(); };
+    const onErr   = (e) => { imap.removeListener("ready", onReady); rej(e); };
+    imap.once("ready", onReady);
+    imap.once("error", onErr);
+    imap.connect();
   });
 }
 
@@ -128,28 +125,26 @@ function searchImap(imap, criteria) {
 }
 
 // ══════════════════════════════════════════════════════
-//  헤더 + 본문 스니펫 동시 fetch
-//  - seqno를 키로 사용 (search 반환값과 일치)
+//  헤더 + 본문 스니펫 fetch
+//  bodies: [""] = 전체 메시지 → simpleParser로 한 번에 파싱
 //  - struct: false (UID FETCH 방지)
-//  - 개별 메시지 오류 무시하고 계속 진행
+//  - seqno를 bag 키로 직접 사용 (search 반환값과 일치)
+//  - bag.entries() 순회 (lookup 불일치 방지)
+//  - 개별 메시지 파싱 오류는 무시하고 계속 진행
 // ══════════════════════════════════════════════════════
-const HEADER_FIELDS =
-  "HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE MESSAGE-ID X-ORIGINAL-TO)";
-
 function fetchHeadersAndSnippets(imap, seqnos) {
   return new Promise((res, rej) => {
     if (!seqnos.length) { res([]); return; }
 
-    const bag = new Map(); // seqno → { parts, attrs }
+    const bag = new Map(); // seqno → { raw: Buffer, attrs: {} }
 
     const f = imap.fetch(seqnos, {
-      bodies: [HEADER_FIELDS, "TEXT"],   // TEXT = 본문 텍스트
+      bodies: [""],  // "" = BODY.PEEK[] = 전체 메시지 (가장 호환성 높음)
       struct: false,
     });
 
-    f.on("message", (msg, seqno) => {   // seqno 직접 사용
+    f.on("message", (msg, seqno) => {
       const parts = {}; let attrs = {};
-
       msg.on("body", (stream, info) => {
         const chunks = [];
         stream.on("data", (c) => chunks.push(c));
@@ -159,38 +154,36 @@ function fetchHeadersAndSnippets(imap, seqnos) {
       msg.once("end", () => bag.set(seqno, { parts, attrs }));
     });
 
+    // 개별 메시지 오류 무시 (전체 중단 방지)
     f.on("error", (e) => console.error("[FETCH warn]", e.message));
 
     f.once("end", async () => {
       try {
         const results = [];
-        for (const seqno of seqnos) {
-          const item = bag.get(seqno);
-          if (!item) continue;
+        // bag을 직접 순회 (seqno lookup 불일치 원천 차단)
+        for (const [seqno, item] of bag) {
+          try {
+            const raw = item.parts[""] || Buffer.alloc(0);
+            const m   = await simpleParser(raw);
 
-          // 헤더 파싱
-          const headerBuf = item.parts[HEADER_FIELDS] || Buffer.alloc(0);
-          const m = await simpleParser(headerBuf);
+            // 스니펫: text 우선, 없으면 html→텍스트 변환
+            const textBody = m.text
+              || (m.html ? m.html.replace(/<[^>]{0,500}>/g, " ") : "");
+            const snippet = textBody
+              .replace(/\s+/g, " ")
+              .trim()
+              .substring(0, 400);
 
-          // 전체 본문에서 스니펫 추출
-          const rawSnippet = (item.parts["TEXT"] || Buffer.alloc(0)).toString("utf-8");
-          const snippet = rawSnippet
-            .replace(/=[\r\n]+/g, "")          // QP 연속 줄
-            .replace(/=[0-9A-Fa-f]{2}/g, " ")  // QP 인코딩 문자
-            .replace(/<[^>]{0,200}>/g, " ")    // HTML 태그
-            .replace(/&[a-z]{2,6};/gi, " ")    // HTML 엔티티
-            .replace(/https?:\/\/\S+/g, "")   // URL 제거
-            .replace(/\s+/g, " ")
-            .trim()
-            .substring(0, 400);
-
-          results.push({
-            seqno,
-            m,
-            flags:     item.attrs.flags || [],
-            snippet,
-            messageId: (m.messageId || "").replace(/[<>]/g, "").trim(),
-          });
+            results.push({
+              seqno,
+              m,
+              flags:     item.attrs.flags || [],
+              snippet,
+              messageId: (m.messageId || "").replace(/[<>]/g, "").trim(),
+            });
+          } catch (e) {
+            console.error("[msg parse error]", seqno, e.message);
+          }
         }
         res(results);
       } catch (e) { rej(e); }
@@ -198,15 +191,25 @@ function fetchHeadersAndSnippets(imap, seqnos) {
   });
 }
 
-// 전체 본문 fetch (read_email 전용)
+// ── 전체 본문 fetch (read_email 전용) ─────────────────
 function fetchFullBody(imap, uid) {
   return new Promise((res, rej) => {
     const chunks = [];
     const f = imap.fetch([uid], { bodies: "", struct: false });
-    f.on("message", (msg) => msg.on("body", (s) => s.on("data", (c) => chunks.push(c))));
-    f.on("error", (e) => { console.error("[FETCH warn]", e.message); });
+
+    f.on("message", (msg) =>
+      msg.on("body", (s) => {
+        s.on("data", (c) => chunks.push(c));
+      })
+    );
+
+    // 오류 시 reject (promie hang 방지)
+    f.once("error", (e) => rej(e));
+
     f.once("end", async () => {
-      try { res(await simpleParser(Buffer.concat(chunks))); } catch (e) { rej(e); }
+      if (chunks.length === 0) { rej(new Error("메일을 찾을 수 없습니다")); return; }
+      try { res(await simpleParser(Buffer.concat(chunks))); }
+      catch (e) { rej(e); }
     });
   });
 }
@@ -217,16 +220,11 @@ function toImapDate(d) {
 }
 
 // ══════════════════════════════════════════════════════
-//  웹 링크 생성
-//  Gmail  → rfc822msgid 딥링크 (메일 직접 열림)
-//  Naver  → 받은편지함 (직접 링크 없음)
-//  Daum   → 받은편지함 (직접 링크 없음)
+//  웹 링크
 // ══════════════════════════════════════════════════════
 function buildWebLink(service, messageId) {
-  if (service === "gmail" && messageId) {
-    // Gmail은 rfc822msgid로 특정 메일 직접 접근 가능
+  if (service === "gmail" && messageId)
     return `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
-  }
   if (service === "naver")  return "https://mail.naver.com/";
   if (service === "daum")   return "https://mail.daum.net/";
   if (service === "nate")   return "https://mail.nate.com/";
@@ -251,14 +249,13 @@ const CATEGORY_RULES = [
 ];
 
 function classifyEmail(from, subject, isNewsletter) {
-  for (const r of CATEGORY_RULES) {
+  for (const r of CATEGORY_RULES)
     if (r.test(from, subject, isNewsletter)) return r.name;
-  }
   return isNewsletter ? "📰 뉴스/미디어" : "📂 기타";
 }
 
 // ══════════════════════════════════════════════════════
-//  스팸 점수 계산 (0~100, 70 이상 = 스팸 의심)
+//  스팸 점수 (0~100)
 // ══════════════════════════════════════════════════════
 const SPAM_PATTERNS = [
   { re: /당첨|무료\s*증정|사은품|경품\s*당첨|축하.*당첨/i,      score: 40 },
@@ -276,9 +273,8 @@ const SPAM_PATTERNS = [
 function calcSpamScore(from, subject, snippet) {
   let score = 0;
   const text = `${from} ${subject} ${snippet}`;
-  for (const { re, score: s } of SPAM_PATTERNS) {
+  for (const { re, score: s } of SPAM_PATTERNS)
     if (re.test(text)) score += s;
-  }
   if ((subject.match(/[!！★◆●▶♠♣]/g) || []).length > 2) score += 20;
   if (/no-?reply|noreply/i.test(from) && /할인|쿠폰|이벤트|무료|당첨/i.test(subject)) score += 25;
   return Math.min(score, 100);
@@ -299,59 +295,63 @@ async function collectNewMails(account, sinceTime) {
   try {
     await imapConnect(imap);
 
-    // 다음 메일함 자동 감지
+    // 다음 수신함 자동 감지 (최상위 폴더만)
     let mailboxName = "INBOX";
     if (account.service === "daum") {
       const boxes = await listBoxes(imap);
-      for (const c of DAUM_INBOX_CANDIDATES) {
+      for (const c of DAUM_INBOX_CANDIDATES)
         if (boxes.includes(c)) { mailboxName = c; break; }
-      }
     }
     result.mailbox = mailboxName;
     await openBox(imap, mailboxName);
 
-    const uids = (
+    const seqnos = (
       await searchImap(imap, ["UNSEEN", ["SINCE", toImapDate(sinceTime)]])
     ).slice(-MAX_FETCH);
 
-    if (!uids.length) return result;
+    if (!seqnos.length) return result;
 
-    // 헤더 + 스니펫 동시 fetch
-    const items = await fetchHeadersAndSnippets(imap, uids);
+    const items = await fetchHeadersAndSnippets(imap, seqnos);
 
     for (const { seqno, m, flags, snippet, messageId } of items) {
       const mailDate = m.date ? new Date(m.date) : null;
 
-      // datetime 2차 필터 + 읽음 제외
+      // 날짜 2차 필터 (IMAP SINCE가 날짜 단위이므로 보정)
       if (mailDate && mailDate <= sinceTime) continue;
+      // UNSEEN 검색 결과이지만 혹시 \Seen 플래그 있으면 제외
       if (flags.includes("\\Seen")) continue;
 
       const from         = m.from?.text || "";
       const subject      = m.subject   || "(제목 없음)";
       const isNewsletter = !!(m.headers?.get("list-unsubscribe"));
       const originalTo   = m.headers?.get("x-original-to")?.[0] || "";
-
-      // 영문 여부 감지 (snippet 기준 — Claude가 번역 판단에 사용)
-      const isEnglish = snippet.length > 20 &&
+      const isEnglish    = snippet.length > 20 &&
         (snippet.match(/[a-zA-Z]/g) || []).length / snippet.length > 0.6;
 
+      const spamScore = calcSpamScore(from, subject, snippet);
       result.mails.push({
-        uid: seqno,
+        uid:         seqno,
         from,
         subject,
         date:        mailDate?.toISOString() || "",
-        snippet,                                           // 본문 앞 400자
+        snippet,
         isEnglish,
         aiCategory:  classifyEmail(from, subject, isNewsletter),
         mailRef:     mailboxName + (originalTo ? ` → ${originalTo}` : ""),
         isNewsletter,
         webLink:     buildWebLink(account.service, messageId),
-        spamScore:   calcSpamScore(from, subject, snippet),
-        isSpam:      calcSpamScore(from, subject, snippet) >= 70,
+        spamScore,
+        isSpam:      spamScore >= 70,
       });
     }
 
-    result.mails.sort((a, b) => b.date.localeCompare(a.date));
+    // 날짜 내림차순 정렬 (날짜 없는 메일은 맨 뒤)
+    result.mails.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return b.date.localeCompare(a.date);
+    });
   } catch (e) {
     result.error = e.message;
   } finally {
@@ -364,7 +364,7 @@ async function collectNewMails(account, sinceTime) {
 // ══════════════════════════════════════════════════════
 //  MCP 서버
 // ══════════════════════════════════════════════════════
-const server = new McpServer({ name: "korean-mail-mcp", version: "4.0.0" });
+const server = new McpServer({ name: "korean-mail-mcp", version: "1.0.2" });
 
 // ── Tool 1: 계정 목록 ─────────────────────────────────
 server.tool(
@@ -419,8 +419,8 @@ server.tool(
     "   예) [다음] IMAP 미활성화 → 다음 메일 웹 환경설정에서 외부 메일 앱 연결 켜기 필요",
   ].join(" "),
   {
-    account_label: z.string().default("all"),
-    override_since: z.string().default(""),
+    account_label:   z.string().default("all"),
+    override_since:  z.string().default(""),
     max_per_account: z.number().min(1).max(200).default(50),
   },
   async ({ account_label, override_since, max_per_account }) => {
@@ -441,9 +441,7 @@ server.tool(
 
     const settled = await Promise.allSettled(
       targets.map((acc) => {
-        const sinceTime = override_since
-          ? new Date(override_since)
-          : getLastRunFor(acc.id);
+        const sinceTime = override_since ? new Date(override_since) : getLastRunFor(acc.id);
         return collectNewMails(acc, sinceTime).then((r) => {
           if (!r.error) updateLastRunFor(acc.id, runAt);
           return r;
@@ -463,14 +461,20 @@ server.tool(
           ...m, account: r.accountLabel, mailbox: r.mailbox,
         }))
       )
-      .sort((a, b) => b.date.localeCompare(a.date));
+      .sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return b.date.localeCompare(a.date);
+      });
 
     const categorySummary = allMails.reduce((acc, m) => {
       acc[m.aiCategory] = (acc[m.aiCategory] || 0) + 1; return acc;
     }, {});
 
-    const englishCount = allMails.filter((m) => m.isEnglish).length;
-    const errors = results.filter((r) => r.error).map((r) => ({ account: r.accountLabel, error: r.error }));
+    const errors = results
+      .filter((r) => r.error)
+      .map((r) => ({ account: r.accountLabel, error: r.error }));
 
     return {
       content: [{
@@ -478,7 +482,7 @@ server.tool(
         text: JSON.stringify({
           runAt:           runAt.toISOString(),
           totalMails:      allMails.length,
-          englishMails:    englishCount,
+          englishMails:    allMails.filter((m) => m.isEnglish).length,
           categorySummary,
           mails:           allMails,
           errors:          errors.length ? errors : undefined,
@@ -491,10 +495,7 @@ server.tool(
 // ── Tool 3: 메일 본문 전체 읽기 ───────────────────────
 server.tool(
   "read_email",
-  [
-    "특정 메일의 전체 본문을 읽습니다.",
-    "영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요.",
-  ].join(" "),
+  "특정 메일의 전체 본문을 읽습니다. 영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요.",
   {
     account_label: z.string(),
     uid:           z.number(),
@@ -515,9 +516,8 @@ server.tool(
       let mailboxName = mailbox;
       if (acc.service === "daum" && mailbox === "INBOX") {
         const boxes = await listBoxes(imap);
-        for (const c of DAUM_INBOX_CANDIDATES) {
+        for (const c of DAUM_INBOX_CANDIDATES)
           if (boxes.includes(c)) { mailboxName = c; break; }
-        }
       }
       await openBox(imap, mailboxName);
 
@@ -557,7 +557,7 @@ server.tool(
   "마지막 실행 시각 초기화 또는 특정 시각으로 설정합니다.",
   {
     account_label: z.string().default("all"),
-    set_to: z.string().default("").describe("ISO 8601. 비우면 24시간 전"),
+    set_to: z.string().default("").describe("ISO 8601. 비우면 7일 전"),
   },
   async ({ account_label, set_to }) => {
     const accounts = loadAccounts();
@@ -566,7 +566,7 @@ server.tool(
       : accounts.filter((a) => a.label === account_label || a.user === account_label);
 
     const ts = set_to ? new Date(set_to) : (() => {
-      const d = new Date(); d.setHours(d.getHours() - 24); return d;
+      const d = new Date(); d.setDate(d.getDate() - 7); return d;
     })();
 
     targets.forEach((a) => updateLastRunFor(a.id, ts));
@@ -582,7 +582,7 @@ server.tool(
 // ── Tool 5: 메일함 목록 ───────────────────────────────
 server.tool(
   "list_mailboxes",
-  "IMAP 폴더 목록을 반환합니다. 다음 전체수신함 폴더명 확인에 유용합니다.",
+  "IMAP 폴더 목록을 반환합니다. 다음 수신함 폴더명 확인에 유용합니다.",
   { account_label: z.string() },
   async ({ account_label }) => {
     const acc = loadAccounts().find(
