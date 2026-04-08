@@ -20,14 +20,14 @@
 ### Step 1 — Node.js 설치
 
 1. [https://nodejs.org](https://nodejs.org) 접속
-2. **LTS** 버전 다운로드 (현재 v20 이상 권장)
+2. **LTS** 버전 다운로드 (**v18 이상 필수**, v20+ LTS 권장)
 3. 설치 마법사 실행 — 모든 옵션 기본값 유지, `Next` 계속 클릭
 4. 설치 완료 후 확인:
 
 ```powershell
 # 윈도우 키 + R → cmd 입력 → 확인
 node --version
-# v20.x.x 같은 버전이 뜨면 성공
+# v18.x.x 이상이면 성공 (v20, v22도 정상)
 ```
 
 > Node.js가 이미 설치되어 있다면 이 단계 건너뛰세요.
@@ -57,7 +57,7 @@ cd k-mail-mcp
 
 1. GitHub 페이지에서 `Code` → `Download ZIP` 클릭
 2. 원하는 위치에 압축 해제 (예: `C:\Users\사용자명\k-mail-mcp`)
-3. 압축 해제된 폴더 안에 `index.js`, `setup.js`가 있는지 확인
+3. 압축 해제된 폴더 안에 `index.js`, `setup.bat`이 있는지 확인
 
 ---
 
@@ -78,9 +78,7 @@ cd k-mail-mcp
 
 ### Step 5 — 계정 등록
 
-```powershell
-node setup.js
-```
+`setup.bat`을 더블클릭하면 계정 등록 메뉴가 나타납니다.
 
 메뉴가 뜨면 `1`을 눌러 계정을 추가합니다.
 
@@ -191,10 +189,10 @@ npm install
 ### Step 4 — 계정 등록
 
 ```bash
-node setup.js
+chmod +x setup.sh && ./setup.sh
 ```
 
-Windows와 동일한 방식으로 계정을 등록합니다.
+메뉴가 뜨면 `1`을 눌러 계정을 추가합니다.
 
 ---
 
@@ -273,7 +271,7 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 5. 같은 페이지 → `애플리케이션 비밀번호` → `애플리케이션 추가`
 6. 이름 입력 (예: `Claude`) → 추가
 7. **표시된 비밀번호를 바로 복사** (페이지를 벗어나면 다시 볼 수 없음)
-8. `node setup.js` → 네이버 선택 → 계정 비밀번호 입력란에 붙여넣기
+8. `setup.bat`(Windows) 또는 `./setup.sh`(macOS) 실행 → 네이버 선택 → 계정 비밀번호 입력
 
 **네이버 IMAP 확인:**
 - [https://mail.naver.com](https://mail.naver.com) → 오른쪽 상단 `환경설정`
@@ -288,7 +286,7 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 3. `앱 비밀번호` → `앱 추가`
 4. 기기명 입력 (예: `Claude`) → 확인
 5. 표시된 비밀번호 복사
-6. `node setup.js` → 다음/카카오 선택 → 계정 비밀번호 입력란에 붙여넣기
+6. `setup.bat`(Windows) 또는 `./setup.sh`(macOS) 실행 → 다음/카카오 선택 → 계정 비밀번호 입력
 
 **다음 IMAP 활성화 (필수):**
 - [https://mail.daum.net](https://mail.daum.net) 로그인
@@ -304,7 +302,7 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 3. 검색창에 `앱 비밀번호` 검색 → 클릭
 4. 앱 이름 입력 (예: `Claude`) → `만들기`
 5. 16자리 비밀번호 복사
-6. `node setup.js` → Gmail 선택 → 계정 비밀번호 입력란에 붙여넣기
+6. `setup.bat`(Windows) 또는 `./setup.sh`(macOS) 실행 → Gmail 선택 → 계정 비밀번호 입력
 
 ---
 
@@ -337,7 +335,11 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 
 Node.js가 설치되지 않았거나 환경변수가 설정되지 않은 상태입니다.
 
-- [nodejs.org](https://nodejs.org)에서 LTS 버전 재설치
+Node.js 버전이 v18 미만인 경우도 동일한 오류가 발생할 수 있습니다.
+
+- `node --version`으로 버전 확인 (v18 이상이어야 함)
+- v18 미만이면 [nodejs.org](https://nodejs.org)에서 LTS 버전 재설치
+- 설치 후 터미널/CMD 재시작 필요
 - 설치 후 터미널(cmd) 완전히 닫고 새로 열기
 - 재확인: `node --version`
 
@@ -352,15 +354,13 @@ npm install --legacy-peer-deps
 
 ---
 
-### `setup.js` 실행 시 비밀번호 입력 화면이 이상함 (Windows)
+### setup.bat 실행 시 메뉴가 안 뜸 (Windows)
 
-Windows CMD에서는 마스킹 입력이 정상 동작하지 않을 수 있습니다.  
-**PowerShell** 또는 **Windows Terminal**에서 실행하세요.
+`setup.bat`을 더블클릭해도 반응이 없으면 PowerShell에서 직접 실행하세요:
 
 ```powershell
-# Windows Terminal에서
 cd C:\Users\사용자명\k-mail-mcp
-node setup.js
+powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
 ---
@@ -403,7 +403,7 @@ node setup.js
 - 일반 로그인 비밀번호가 아닌 **계정 비밀번호**를 사용했는지 확인
   (보안 설정 → 앱 비밀번호 메뉴에서 새로 발급한 비밀번호여야 함)
 - 각 서비스에서 IMAP이 활성화되어 있는지 확인
-- 계정 비밀번호를 재발급하고 `node setup.js` → 계정 수정으로 업데이트
+- 계정 비밀번호를 재발급하고 `setup.bat`(Windows) 또는 `./setup.sh`(macOS) → 계정 수정으로 업데이트
 
 ---
 
@@ -416,7 +416,8 @@ node setup.js
 rm accounts.enc.json .master.key  # macOS/Linux
 # Windows: 탐색기에서 두 파일 삭제
 
-node setup.js  # 계정 재등록
+setup.bat  # 계정 재등록 (Windows)
+./setup.sh  # 계정 재등록 (macOS/Linux)
 ```
 
 ---

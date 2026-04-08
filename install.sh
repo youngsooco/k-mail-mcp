@@ -16,7 +16,14 @@ if ! command -v node &> /dev/null; then
     echo "       brew install node 를 실행하세요."
     exit 1
 fi
-echo "[OK] Node.js $(node --version) 확인"
+NODE_VER=$(node --version | sed "s/v//")
+NODE_MAJOR=$(echo $NODE_VER | cut -d. -f1)
+if [ "$NODE_MAJOR" -lt 18 ] 2>/dev/null; then
+    echo "[오류] Node.js v${NODE_VER}은 너무 오래됐습니다. v18 이상을 설치하세요."
+    echo "       https://nodejs.org"
+    exit 1
+fi
+echo "[OK] Node.js v${NODE_VER} 확인"
 
 # ── npm install ───────────────────────────────────────────────────
 echo ""
@@ -87,7 +94,7 @@ echo "╚═══════════════════════�
 echo ""
 echo "다음 단계:"
 echo "  1. 메일 계정 등록:"
-echo "     node setup.js"
+echo "     chmod +x setup.sh && ./setup.sh"
 echo ""
 echo "  2. Claude Desktop을 완전히 종료 후 재시작"
 echo ""
