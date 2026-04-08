@@ -1,6 +1,6 @@
 {
   "name": "korean-mail-mcp",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "MCP server for Korean & global mail services (Naver, Daum, Gmail, Nate, Yahoo, iCloud) via IMAP",
   "main": "index.js",
   "type": "module",
