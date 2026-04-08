@@ -130,17 +130,19 @@ chmod +x setup.sh && ./setup.sh
 
 ```
 ============================================
-   Korean Mail MCP - Account Setup
+   한국 메일 MCP - 계정 설정
 ============================================
 
-  1) Add / Update account
-  2) List accounts
-  3) Delete account
-  4) Exit
+  1) 계정 추가 / 수정
+  2) 계정 목록
+  3) 계정 삭제
+  4) AI 스팸 필터 설정 (Claude Haiku API 키)  (미등록)
+  5) 종료
 ```
 
-`1`을 선택하고 서비스, 이메일, 계정 비밀번호, 별칭을 입력합니다.
-이메일과 비밀번호 입력 시 `***`로 마스킹되며, **AES-256-GCM으로 암호화되어 저장**됩니다.
+`1`을 선택해 서비스, 이메일, 계정 비밀번호, 별칭을 입력합니다.  
+이메일과 비밀번호 입력 시 `***`로 마스킹되며, **AES-256-GCM으로 암호화되어 저장**됩니다.  
+API 키 등록은 `4`번 메뉴를 사용하세요.
 
 ### 4. Claude Desktop 재시작
 
@@ -257,7 +259,7 @@ K-Mail-MCP는 여러 신호를 조합해 스팸을 탐지합니다.
 > `claude_desktop_config.json`에 평문으로 저장되지 않습니다.  
 > GitHub에 업로드되지 않도록 `.gitignore`에 포함되어 있습니다.
 
-**setup.bat 실행 → 5번 메뉴 선택**
+**setup.bat 실행 → 4번 메뉴 선택**
 
 ```
 ============================================
@@ -308,18 +310,25 @@ isSpam    = spamScore >= 70
 
 ```
 사용자 입력 (setup.bat / setup.sh)
-    ↓ 이메일 주소 + 비밀번호 → AES-256-GCM 암호화
-accounts.enc.json  ← 암호화된 데이터만 저장
-.master.key        ← 이 설치본 전용 256-bit 키 (자동 생성)
+    ├─ 1~4번 메뉴: 이메일 주소 + 비밀번호
+    │       ↓ AES-256-GCM 암호화
+    │  accounts.enc.json  ← 암호화된 계정 정보만 저장
+    │
+    └─ 4번 메뉴: Anthropic API 키 (선택)
+            ↓ AES-256-GCM 암호화 (동일 키)
+       settings.enc.json  ← 암호화된 API 키만 저장
+
+.master.key  ← 이 설치본 전용 256-bit 키 (두 파일 공용, 자동 생성)
     ↓
-MCP 서버 실행 시 → 메모리에서만 복호화 → IMAP 연결
+MCP 서버 실행 시 → 메모리에서만 복호화 → IMAP 연결 / Haiku API 호출
     ↓ 서버 종료 → 평문 완전 소멸
 ```
 
-- 비밀번호는 파일에 **절대 평문으로 저장되지 않습니다**
+- 비밀번호·API 키는 파일에 **절대 평문으로 저장되지 않습니다**
 - `.master.key`는 이 PC에만 존재합니다
 - 다른 설치본의 키로는 데이터를 복호화할 수 없습니다
-- Claude (Anthropic)로 비밀번호가 전송되지 않습니다 — IMAP 연결은 로컬에서만 처리
+- `claude_desktop_config.json`에 API 키를 직접 넣지 않습니다
+- Claude (Anthropic) 서버로 비밀번호·API 키가 전송되지 않습니다 — 모든 처리는 로컬
 
 ---
 
@@ -327,22 +336,32 @@ MCP 서버 실행 시 → 메모리에서만 복호화 → IMAP 연결
 
 ```
 k-mail-mcp/
-├── index.js           MCP 서버 본체
-├── setup.bat          계정 등록 (Windows 더블클릭)
-├── setup.ps1          계정 등록 UI (Windows PowerShell)
-├── setup.sh           계정 등록 (macOS/Linux)
-└── setup-worker.js    암호화/저장 코어 (공통)
-├── package.json
-├── accounts.enc.json  암호화된 계정 정보 (자동 생성, git 제외)
-├── .master.key        암호화 키 (자동 생성, git 제외, 절대 공유 금지)
-├── .instance.json     인스턴스 식별자 (키 아님)
-├── settings.enc.json  암호화된 설정 (API 키 등, 자동 생성, git 제외)
-├── last_run.json      마지막 실행 시각 (자동 관리)
+├── index.js              MCP 서버 본체 (v1.1.0)
+├── install.bat           Windows 설치 (더블클릭)
+├── install.ps1           설치 로직 (PowerShell, MSIX 경로 자동 탐색)
+├── install.sh            macOS/Linux 설치
+├── setup.bat             Windows 계정·설정 관리 (더블클릭)
+├── setup.ps1             계정·설정 관리 UI (PowerShell)
+├── setup.sh              macOS/Linux 계정·설정 관리
+├── setup-worker.js       암호화/저장 코어 (계정 + API 키 공통)
+├── package.json          (v1.1.0)
+├── .gitignore
 ├── LICENSE
 ├── README.md
+├── INSTALL_GUIDE.md      플랫폼별 상세 설치 가이드
+├── CONTRIBUTING.md
 ├── PHILOSOPHY.md
-├── INSTALL_GUIDE.md   플랫폼별 상세 설치 가이드
-└── CONTRIBUTING.md
+└── ROADMAP.md
+```
+
+**자동 생성 파일 (git 제외, 공유 금지):**
+
+```
+accounts.enc.json    계정 정보 — AES-256-GCM 암호화
+settings.enc.json    API 키 등 설정 — AES-256-GCM 암호화
+.master.key          256-bit 암호화 키 (절대 공유·백업 금지)
+.instance.json       인스턴스 식별자
+last_run.json        마지막 실행 시각 (자동 관리)
 ```
 
 ---
