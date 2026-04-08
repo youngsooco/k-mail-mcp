@@ -17,6 +17,7 @@ if ((Get-Culture).Name -like "ko*") {
     $L_DONE     = "설치 완료!"
     $L_NEXT1    = "  1. 메일 계정 등록:"
     $L_NEXT1B   = "     setup.bat"
+    $L_NEXT1C   = "     (5번 메뉴: AI 스팸 필터 API 키 설정 선택 가능)"
     $L_NEXT2    = "  2. Claude Desktop 완전 종료 후 재시작"
     $L_NEXT3    = "  3. Claude에게 말해보세요:"
     $L_NEXT3B   = '     "새 메일 확인해줘"'
@@ -34,6 +35,7 @@ if ((Get-Culture).Name -like "ko*") {
     $L_DONE     = "Install Complete!"
     $L_NEXT1    = "  1. Register mail account:"
     $L_NEXT1B   = "     setup.bat"
+    $L_NEXT1C   = "     (Option 5: Configure AI spam filter API key)"
     $L_NEXT2    = "  2. Fully close and restart Claude Desktop"
     $L_NEXT3    = "  3. Ask Claude:"
     $L_NEXT3B   = '     "Check my new emails"'
@@ -123,6 +125,7 @@ Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host $L_NEXT1
 Write-Host $L_NEXT1B -ForegroundColor Yellow
+Write-Host $L_NEXT1C -ForegroundColor DarkGray
 Write-Host $L_NEXT2
 Write-Host $L_NEXT3
 Write-Host $L_NEXT3B -ForegroundColor Yellow

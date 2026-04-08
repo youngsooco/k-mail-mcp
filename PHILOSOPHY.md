@@ -40,6 +40,7 @@ Claude AI와 함께 대화하면서, 아이디어를 구체화하고, 코드를 
 - 복호화는 로컬 메모리에서만 — 파일에 평문 없음
 - IMAP 연결은 사용자 PC에서 직접 — 중간 서버 없음
 - 설치본마다 고유 키 생성 — 다른 PC에서 탈취해도 복호화 불가
+- Anthropic API 키도 동일한 AES-256-GCM으로 암호화 (`settings.enc.json`) — `claude_desktop_config.json`에 평문 저장 안 함
 
 불편하더라도 안전한 방식을 선택했습니다.
 

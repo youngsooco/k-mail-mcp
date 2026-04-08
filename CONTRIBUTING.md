@@ -1,6 +1,7 @@
 > 🤖 **이 프로젝트는 Claude AI와 함께 유지됩니다.**
 > 이슈를 등록하면 Claude AI가 자동으로 한국어로 답변합니다.
 > PR을 올리면 Claude AI가 보안·버그·성능 관점에서 코드를 리뷰합니다.
+> v1.1.0부터 4단계 스팸 탐지(패턴/DNSBL/SPF·DKIM·DMARC/Haiku AI)를 포함합니다.
 > 최종 머지 결정은 메인테이너(dadfkim)가 합니다.
 
 # K-Mail-MCP 기여 가이드
@@ -116,7 +117,8 @@ refactor: 코드 리팩토링
 ## 지켜야 할 원칙
 
 - 비밀번호, 이메일 주소 등 개인정보를 코드나 이슈에 포함하지 마세요
-- `.master.key`, `accounts.enc.json`은 절대 커밋하지 마세요 (`.gitignore`에 이미 포함)
+- `.master.key`, `accounts.enc.json`, `settings.enc.json`은 절대 커밋하지 마세요 (`.gitignore`에 이미 포함)
+- API 키(`ANTHROPIC_API_KEY`)는 코드나 이슈에 포함하지 마세요 — `setup.bat` 5번 메뉴로만 등록
 - 보안에 영향을 주는 변경은 Issue에서 먼저 논의해주세요
 
 ---
