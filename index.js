@@ -157,7 +157,7 @@ function fetchHeadersAndSnippets(imap, uids) {
       msg.once("end", () => bag.set(attrs.uid, { parts, attrs }));
     });
 
-    f.once("error", rej);
+    f.on("error", (e) => { console.error("[FETCH warn]", e.message); });
     f.once("end", async () => {
       try {
         const results = [];
@@ -203,7 +203,7 @@ function fetchFullBody(imap, uid) {
     const chunks = [];
     const f = imap.fetch([uid], { bodies: "", struct: true });
     f.on("message", (msg) => msg.on("body", (s) => s.on("data", (c) => chunks.push(c))));
-    f.once("error", rej);
+    f.on("error", (e) => { console.error("[FETCH warn]", e.message); });
     f.once("end", async () => {
       try { res(await simpleParser(Buffer.concat(chunks))); } catch (e) { rej(e); }
     });
