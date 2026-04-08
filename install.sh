@@ -67,6 +67,12 @@ echo "[3/3] Claude Desktop 설정 업데이트 중..."
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INDEX_PATH="$CURRENT_DIR/index.js"
 
+# [SECURITY] 경로에 특수문자가 있으면 중단
+if [[ "$CONFIG_FILE" == *"'"* ]] || [[ "$INDEX_PATH" == *"'"* ]]; then
+    echo "[오류] 경로에 허용되지 않는 문자가 포함되어 있습니다: $CONFIG_FILE"
+    exit 1
+fi
+
 node -e "
 const fs = require('fs');
 const configPath = '$CONFIG_FILE';

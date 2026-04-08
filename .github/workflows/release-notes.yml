@@ -5,12 +5,23 @@ on:
     tags:
       - "v*"
 
+# [SECURITY] 태그 연속 push 시 이전 실행 취소 — 경합 방지
+concurrency:
+  group: release-notes-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
+  # contents: write — GitHub Releases 생성/수정에 필요한 최소 권한
+  # 다른 권한(issues, pull-requests, actions)은 명시적으로 차단
   contents: write
+  issues: none
+  pull-requests: none
+  actions: none
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # [SECURITY] 봇 걸림 방지 — 최대 10분
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,3 +54,4 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: node .github/scripts/release-notes.js
+        

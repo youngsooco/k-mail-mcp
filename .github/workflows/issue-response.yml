@@ -10,10 +10,23 @@ permissions:
   pull-requests: none
   actions: none
 
+# [SECURITY] 동일 이슈에 대한 병렬 실행 차단 — API 쿼터 소진 방지
+concurrency:
+  group: issue-response-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   respond:
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
+    timeout-minutes: 5  # [SECURITY] 봇 걸림 방지 — 최대 5분
+    # [SECURITY] 봇 계정 및 NONE(리포 미경험) 완전 차단
+    # author_association 값: OWNER / MEMBER / COLLABORATOR / CONTRIBUTOR /
+    #                        FIRST_TIME_CONTRIBUTOR / FIRST_TIMER / NONE
+    if: |
+      github.actor != 'github-actions[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      github.event.issue.author_association != 'NONE'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,3 +43,4 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: node .github/scripts/issue-response.js
+        

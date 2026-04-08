@@ -29,7 +29,8 @@ const T = (ko, en) => isKorean ? ko : en;
 function initInstance() {
   if (!fs.existsSync(META_FILE)) {
     const meta = { instanceId: crypto.randomUUID(), createdAt: new Date().toISOString() };
-    fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2));
+    // [SECURITY] 인스턴스 메타 파일 권한 0o600 (CVE-008)
+    fs.writeFileSync(META_FILE, JSON.stringify(meta, null, 2), { mode: 0o600 });
   }
   if (!fs.existsSync(KEY_FILE)) {
     const key = crypto.randomBytes(32).toString("hex");

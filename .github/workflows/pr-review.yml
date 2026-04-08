@@ -15,15 +15,32 @@ permissions:
   issues: none
   actions: none
 
+# [SECURITY] 같은 PR에 synchronize 연속 도배 시 이전 실행 취소
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
-    if: github.actor != 'github-actions[bot]'
+    timeout-minutes: 10  # [SECURITY] 봇 걸림 방지 — 최대 10분
+    # [SECURITY] 봇 계정 차단
+    # 주의: fork PR에서는 secrets(ANTHROPIC_API_KEY)가 GitHub에 의해 차단됨.
+    # API 키 없이 스크립트가 실행되면 Anthropic 호출이 실패하므로,
+    # fork여부를 명시적으로 감지해 불필요한 실행 자체를 스킵.
+    if: |
+      github.actor != 'github-actions[bot]' &&
+      github.actor != 'dependabot[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # [SECURITY] fetch-depth: 0 → 2로 축소
+          # PR diff 계산에는 base/head 두 커밋만 필요
+          # 전체 히스토리 불필요 — 대형 리포에서 불필요한 데이터 노출 방지
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,3 +59,4 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}
         run: node .github/scripts/pr-review.js
+        
