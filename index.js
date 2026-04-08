@@ -251,6 +251,33 @@ function classifyEmail(from, subject, isNewsletter) {
 }
 
 // ══════════════════════════════════════════════════════
+//  스팸 점수 계산 (0~100, 70 이상 = 스팸 의심)
+// ══════════════════════════════════════════════════════
+const SPAM_PATTERNS = [
+  { re: /당첨|무료\s*증정|사은품|경품\s*당첨|축하.*당첨/i,      score: 40 },
+  { re: /대출|신용\s*대출|급전|당일\s*대출|저금리.*대출/i,       score: 50 },
+  { re: /비아그라|발기|남성\s*강화/i,                             score: 70 },
+  { re: /선착순.*무료|무료.*체험.*신청/i,                          score: 35 },
+  { re: /you.*won|claim.*prize|free.*gift/i,                      score: 45 },
+  { re: /click.*here.*now|act.*now.*limited|urgent.*reply/i,      score: 40 },
+  { re: /nigerian|inheritance.*million|wire.*transfer.*urgent/i,  score: 80 },
+  { re: /계정.*정지|계정.*차단|비밀번호.*재설정.*요청.*발생/i,     score: 55 },
+  { re: /account.*suspended.*verify|password.*reset.*required/i,  score: 55 },
+  { re: /카드.*정보.*유출|개인정보.*유출.*확인/i,                  score: 60 },
+];
+
+function calcSpamScore(from, subject, snippet) {
+  let score = 0;
+  const text = `${from} ${subject} ${snippet}`;
+  for (const { re, score: s } of SPAM_PATTERNS) {
+    if (re.test(text)) score += s;
+  }
+  if ((subject.match(/[!！★◆●▶♠♣]/g) || []).length > 2) score += 20;
+  if (/no-?reply|noreply/i.test(from) && /할인|쿠폰|이벤트|무료|당첨/i.test(subject)) score += 25;
+  return Math.min(score, 100);
+}
+
+// ══════════════════════════════════════════════════════
 //  단일 계정 메일 수집
 // ══════════════════════════════════════════════════════
 const MAX_FETCH = 200;
@@ -307,11 +334,13 @@ async function collectNewMails(account, sinceTime) {
         subject,
         date:        mailDate?.toISOString() || "",
         snippet,                                           // 본문 앞 400자
-        isEnglish,                                         // 영문 여부 플래그
+        isEnglish,
         aiCategory:  classifyEmail(from, subject, isNewsletter),
         mailRef:     mailboxName + (originalTo ? ` → ${originalTo}` : ""),
         isNewsletter,
-        webLink:     buildWebLink(account.service, messageId), // 메일 링크
+        webLink:     buildWebLink(account.service, messageId),
+        spamScore:   calcSpamScore(from, subject, snippet),
+        isSpam:      calcSpamScore(from, subject, snippet) >= 70,
       });
     }
 
@@ -367,10 +396,12 @@ server.tool(
   "check_new_mails",
   [
     "마지막 실행 이후 읽지 않은 메일을 전체 계정에서 수집합니다.",
-    "각 메일에는 snippet(본문 미리보기), isEnglish(영문 여부), aiCategory(AI 분류),",
-    "mailRef(원본 메일함 참조), webLink(메일 링크 또는 받은편지함 URL)가 포함됩니다.",
-    "영문 메일(isEnglish=true)은 snippet을 번역·요약해서 사용자에게 제공하세요.",
-    "webLink로 사용자가 직접 메일을 확인할 수 있도록 링크를 함께 표시하세요.",
+    "각 메일에는 account(계정 라벨), service(naver/daum/gmail), snippet, isEnglish,",
+    "aiCategory, webLink, spamScore(0~100), isSpam(70이상=스팸의심) 필드가 포함됩니다.",
+    "반드시 각 메일에 [account 라벨] 표기로 어느 계정에서 온 메일인지 명시하세요.",
+    "webLink를 반드시 클릭 가능한 링크로 표시하세요. (Gmail은 해당 메일 직접 링크)",
+    "isSpam=true 메일은 일반 목록과 분리해서 ⚠️ 스팸 의심 섹션에 별도 표시하세요.",
+    "영문 메일(isEnglish=true)은 snippet을 번역·요약해서 제공하세요.",
   ].join(" "),
   {
     account_label: z.string().default("all"),
