@@ -108,35 +108,7 @@ function loadDecrypted() {
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise((res) => rl.question(q, res));
 
-/** 입력 중 화면에 * 표시 (비밀번호/이메일 둘 다 사용 가능) */
-function askMasked(question) {
-  return new Promise((resolve) => {
-    process.stdout.write(question);
-    let input = "";
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding("utf-8");
 
-    const onData = (ch) => {
-      if (ch === "\n" || ch === "\r" || ch === "\u0003") {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        process.stdin.removeListener("data", onData);
-        process.stdout.write("\n");
-        resolve(input);
-      } else if (ch === "\u007f") {
-        input = input.slice(0, -1);
-        process.stdout.clearLine(0);
-        process.stdout.cursorTo(0);
-        process.stdout.write(question + "*".repeat(input.length));
-      } else {
-        input += ch;
-        process.stdout.write("*");
-      }
-    };
-    process.stdin.on("data", onData);
-  });
-}
 
 // ══════════════════════════════════════════════════════
 //  메뉴 기능
@@ -151,12 +123,12 @@ async function addOrUpdateAccount(keyBuf) {
   const service = SERVICES[svcNum];
   if (!service) { console.log("❌ 잘못된 선택"); return; }
 
-  // 이메일 주소 — 마스킹 입력
-  const userRaw = await askMasked("  이메일 주소: ");
+  // 이메일 주소 — 평문 입력 (저장 시 암호화)
+  const userRaw = (await ask("  이메일 주소: ")).trim();
   if (!userRaw.includes("@")) { console.log("❌ 올바른 이메일 형식이 아닙니다"); return; }
 
-  // 앱 비밀번호 — 마스킹 입력
-  const passRaw = await askMasked("  앱 비밀번호: ");
+  // 앱 비밀번호 — 평문 입력 후 암호화 저장 (입력 후 Claude가 암호화)
+  const passRaw = (await ask("  앱 비밀번호 (입력 후 자동 암호화 저장): ")).trim();
   if (passRaw.length < 4)     { console.log("❌ 비밀번호가 너무 짧습니다"); return; }
 
   const label = (await ask("  별칭 (예: 다음개인, 회사메일): ")).trim() || userRaw.split("@")[0];
