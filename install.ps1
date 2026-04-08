@@ -76,6 +76,9 @@ Write-Host $L_OK1 -ForegroundColor Green
 # Claude Desktop 설정 탐색
 Write-Host $L_STEP2
 $configPaths = @(
+    # MSIX 설치 버전 (Microsoft Store / 최신 설치) - 우선 탐색
+    "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json",
+    # 일반 설치 버전
     "$env:APPDATA\Claude\claude_desktop_config.json",
     "$env:LOCALAPPDATA\Claude\claude_desktop_config.json",
     "$env:USERPROFILE\AppData\Roaming\Claude\claude_desktop_config.json"
@@ -108,7 +111,8 @@ if (-not $cfg.PSObject.Properties["mcpServers"]) {
 }
 $cfg.mcpServers | Add-Member -MemberType NoteProperty -Name "k-mail-mcp" -Value $mcpEntry -Force
 
-$cfg | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
+$json = $cfg | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText($configPath, $json, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "[OK] Config updated: $configPath" -ForegroundColor Green
 
 # 완료

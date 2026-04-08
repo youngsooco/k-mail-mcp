@@ -329,6 +329,37 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 
 ---
 
+
+---
+
+### Windows MSIX 설치 버전 — MCP가 로드되지 않는 문제
+
+**현상:** install.bat 실행 후 Claude Desktop 재시작해도 k-mail-mcp 도구가 보이지 않음
+
+**원인:** Windows Store(MSIX) 방식 Claude Desktop은 가상화된 경로를 사용해서 config 파일이 두 개 존재함
+
+| 파일 | 경로 |
+|---|---|
+| Claude Desktop이 실제 읽는 파일 | `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json` |
+| install.bat이 기본으로 쓰는 파일 | `%LOCALAPPDATA%\Claude\claude_desktop_config.json` (다른 파일!) |
+
+**해결 방법 1 — install.bat 재실행 (v1.0.2 이상 권장)**
+
+v1.0.2부터 MSIX 경로 자동 감지. install.bat 재실행으로 해결됩니다.
+
+**해결 방법 2 — 수동 추가**
+
+```powershell
+$p = "$env:LOCALAPPDATA\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
+$cfg = Get-Content $p -Raw | ConvertFrom-Json
+$mcp = @{ "k-mail-mcp" = @{ command = "node"; args = @("C:\workspace\korean-mail-mcp\index.js") } }
+$cfg | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue $mcp -Force
+[System.IO.File]::WriteAllText($p, ($cfg | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+```
+
+> 경로의 `Claude_pzs8sxrjxfjjc` 부분은 설치 버전마다 다를 수 있어요.
+> `dir "%LOCALAPPDATA%\Packages\Claude_*"` 로 실제 폴더명 확인하세요.
+
 ## 자주 겪는 문제
 
 ### `node: command not found` 또는 `'node'은(는) 내부 또는 외부 명령이 아닙니다`
