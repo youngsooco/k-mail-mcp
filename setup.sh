@@ -4,6 +4,11 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# 로케일 감지
+IS_KOREAN=false
+[[ "$LANG" == ko_* || "$LANGUAGE" == ko* ]] && IS_KOREAN=true
+T() { if $IS_KOREAN; then echo "$1"; else echo "$2"; fi }
+
 # ── 컬러 출력 ─────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m';  RED='\033[0;31m'; NC='\033[0m'
@@ -57,10 +62,10 @@ add_account() {
   echo ""
   echo -e "${YELLOW}-- Add / Update Account --${NC}"
   echo "  1) Naver  2) Daum/Kakao  3) Gmail  4) Nate  5) Yahoo  6) iCloud"
-  printf "  Service: "
+  printf "$(T "  서비스: " "  Service: ")"
   read -r svc
 
-  printf "  Email address: "
+  printf "$(T "  이메일 주소: " "  Email address: ")"
   read -r email
 
   if [[ "$email" != *"@"* ]]; then
@@ -72,7 +77,7 @@ add_account() {
   read_password "  계정 비밀번호: "
   local pass="$REPLY"
 
-  printf "  Label (e.g. daum-personal): "
+  printf "$(T "  라벨 (예: 다음개인): " "  Label (e.g. daum-personal): ")"
   read -r label
   [ -z "$label" ] && label="${email%%@*}"
 
@@ -95,7 +100,7 @@ list_accounts() {
 # ── 계정 삭제 ──────────────────────────────────────────
 remove_account() {
   list_accounts
-  printf "  Number to delete: "
+  printf "$(T "  삭제할 번호: " "  Number to delete: ")"
   read -r idx
   local json="{\"index\":$idx}"
   result=$(call_worker "delete" "$json")
@@ -107,12 +112,12 @@ print_header
 
 while true; do
   echo ""
-  echo "  1) Add / Update account"
-  echo "  2) List accounts"
-  echo "  3) Delete account"
-  echo "  4) Exit"
+  echo "$(T "  1) 계정 추가 / 수정" "  1) Add / Update account")"
+  echo "$(T "  2) 계정 목록" "  2) List accounts")"
+  echo "$(T "  3) 계정 삭제" "  3) Delete account")"
+  echo "$(T "  4) 종료" "  4) Exit")"
   echo ""
-  printf "  Select: "
+  printf "$(T "  선택: " "  Select: ")"
   read -r choice
 
   case "$choice" in

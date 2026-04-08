@@ -103,17 +103,17 @@ async function main() {
 
     if (existIdx >= 0) {
       accounts[existIdx] = entry;
-      console.log(`[OK] Updated: [${SVC_LABEL[service]}] ${label}`);
+      console.log(`[OK] ${T('업데이트:', 'Updated:')} [${SVC_LABEL[service]}] ${label}`);
     } else {
       accounts.push(entry);
-      console.log(`[OK] Added: [${SVC_LABEL[service]}] ${label}`);
+      console.log(`[OK] ${T('추가됨:', 'Added:')} [${SVC_LABEL[service]}] ${label}`);
     }
     console.log(`     Email + password encrypted with AES-256-GCM`);
     saveRaw(accounts);
 
   } else if (action === "list") {
     const raw = loadRaw();
-    if (!raw.length) { console.log("  (none)"); return; }
+    if (!raw.length) { console.log("  (" + T("없음", "none") + ")"); return; }
     raw.forEach((a, i) => {
       let userDisplay = "(decrypt failed)";
       try { userDisplay = decrypt(a.encUser, keyBuf); } catch {}
@@ -123,10 +123,10 @@ async function main() {
   } else if (action === "delete") {
     const accounts = loadRaw();
     const n = (input.index || 1) - 1;
-    if (n < 0 || n >= accounts.length) { console.log("[ERROR] Invalid number"); return; }
+    if (n < 0 || n >= accounts.length) { console.log(T("[ERROR] 잘못된 번호입니다", "[ERROR] Invalid number")); return; }
     const removed = accounts.splice(n, 1)[0];
     saveRaw(accounts);
-    console.log(`[DELETED] ${removed.label}`);
+    console.log(`[${T('삭제됨', 'DELETED')}] ${removed.label}`);
   }
 }
 
