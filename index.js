@@ -340,17 +340,17 @@ function authLabel(auth) {
 //  경계 구간(15~75점) 메일만 호출 → API 비용 최소화
 //  ANTHROPIC_API_KEY 환경변수 필요
 // ══════════════════════════════════════════════════════
-const HAIKU_API_KEY = loadApiKey();
-const HAIKU_ENABLED = HAIKU_API_KEY.length > 10;
 
 async function claudeHaikuJudge(from, subject, snippet) {
-  if (!HAIKU_ENABLED) return null;
+  // 매 호출마다 동적으로 읽기 → setup.bat 등록 후 재시작 불필요
+  const apiKey = loadApiKey();
+  if (apiKey.length <= 10) return null;
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": HAIKU_API_KEY,
+        "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -553,7 +553,7 @@ server.tool(
 
     return { content: [{ type: "text",
       text: JSON.stringify({ instanceId: instanceId.slice(0,8)+"...", accounts,
-        haikuEnabled: HAIKU_ENABLED }) }] };
+        haikuEnabled: loadApiKey().length > 10 }) }] };
   }
 );
 
@@ -630,7 +630,7 @@ server.tool(
       englishMails:    allMails.filter(m => m.isEnglish).length,
       spamCount,
       categorySummary,
-      haikuEnabled:    HAIKU_ENABLED,
+      haikuEnabled:    loadApiKey().length > 10,
       mails:           allMails,
       errors:          errors.length ? errors : undefined,
     }, null, 2) }] };
