@@ -14,6 +14,16 @@ const ACCOUNTS_FILE  = path.join(__dirname, "accounts.enc.json");
 const KEY_FILE       = path.join(__dirname, ".master.key");
 const META_FILE      = path.join(__dirname, ".instance.json");
 
+// ── 로케일 감지 ──────────────────────────────────────────────────
+function detectKorean() {
+  const lang = process.env.LANG || process.env.LANGUAGE || "";
+  if (lang.startsWith("ko")) return true;
+  try { return new Intl.DateTimeFormat().resolvedOptions().locale.startsWith("ko"); }
+  catch { return false; }
+}
+const isKorean = detectKorean();
+const T = (ko, en) => isKorean ? ko : en;
+
 // ── 인스턴스 초기화 ───────────────────────────────────
 function initInstance() {
   if (!fs.existsSync(META_FILE)) {
