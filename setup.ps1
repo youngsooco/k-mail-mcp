@@ -26,6 +26,15 @@ if ((Get-Culture).Name -like "ko*") {
     $L_SELECT  = "  선택"
     $L_INVALID = "잘못된 선택입니다."
     $L_BYE     = "종료합니다."
+    $L_MENU5   = "  5) AI 스팸 필터 설정 (Claude Haiku API 키)"
+    $L_API_HDR = "-- AI 스팸 필터 설정 (Claude Haiku) --"
+    $L_API_CUR = "  현재 상태"
+    $L_API_KEY = "  API 키 입력 (비워두면 비활성화)"
+    $L_API_SAV = "  [OK] API 키가 설정됐습니다. Claude Desktop을 재시작하세요."
+    $L_API_CLR = "  [OK] API 키가 제거됐습니다. Claude Haiku 판단이 비활성화됩니다."
+    $L_API_NOCFG = "  [ERROR] claude_desktop_config.json 을 찾을 수 없습니다. install.bat 을 먼저 실행해주세요."
+    $L_API_NOMCP = "  [ERROR] k-mail-mcp 설정이 없습니다. install.bat 을 먼저 실행해주세요."
+    $L_API_NOTE = "  [안내] API 키는 외부에 공유하지 마세요. config 파일에만 저장됩니다."
 } else {
     $L_TITLE   = "Korean Mail MCP - Account Setup"
     $L_MENU1   = "  1) Add / Update account"
@@ -47,6 +56,15 @@ if ((Get-Culture).Name -like "ko*") {
     $L_SELECT  = "  Select"
     $L_INVALID = "Invalid selection"
     $L_BYE     = "Goodbye!"
+    $L_MENU5   = "  5) AI Spam Filter (Claude Haiku API Key)"
+    $L_API_HDR = "-- AI Spam Filter (Claude Haiku) --"
+    $L_API_CUR = "  Current status"
+    $L_API_KEY = "  API Key (leave blank to disable)"
+    $L_API_SAV = "  [OK] API key saved. Restart Claude Desktop."
+    $L_API_CLR = "  [OK] API key removed. Claude Haiku judgment disabled."
+    $L_API_NOCFG = "  [ERROR] claude_desktop_config.json not found. Run install.bat first."
+    $L_API_NOMCP = "  [ERROR] k-mail-mcp config missing. Run install.bat first."
+    $L_API_NOTE = "  [Note] Keep your API key private. It is stored only in the config file."
 }
 
 function Show-Header {
@@ -62,6 +80,7 @@ function Show-Menu {
     Write-Host $L_MENU2
     Write-Host $L_MENU3
     Write-Host $L_MENU4
+    Write-Host $L_MENU5
     Write-Host ""
 }
 
@@ -77,6 +96,74 @@ function Invoke-Worker($action, $data) {
     $result = & node "$ScriptDir\setup-worker.js" $action
     $env:KMAIL_INPUT = $null
     return $result
+}
+
+
+function Find-ConfigPath {
+    # MSIX 설치판 우선 탐색 (Windows Store 설치)
+    $msixPattern = "$env:LOCALAPPDATA\Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json"
+    $msixPath = Get-Item $msixPattern -ErrorAction SilentlyContinue |
+                Select-Object -First 1 -ExpandProperty FullName
+    if ($msixPath -and (Test-Path $msixPath)) { return $msixPath }
+
+    # 일반 설치판
+    $candidates = @(
+        "$env:APPDATA\Claude\claude_desktop_config.json",
+        "$env:LOCALAPPDATA\Claude\claude_desktop_config.json"
+    )
+    foreach ($p in $candidates) { if (Test-Path $p) { return $p } }
+    return $null
+}
+
+function Set-ApiKey {
+    Write-Host ""
+    Write-Host $L_API_HDR -ForegroundColor Yellow
+    Write-Host $L_API_NOTE -ForegroundColor DarkGray
+
+    $cfgPath = Find-ConfigPath
+    if (-not $cfgPath) {
+        Write-Host $L_API_NOCFG -ForegroundColor Red
+        return
+    }
+
+    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+    $mcpNode = $cfg.mcpServers.PSObject.Properties["k-mail-mcp"]?.Value
+    if (-not $mcpNode) {
+        Write-Host $L_API_NOMCP -ForegroundColor Red
+        return
+    }
+
+    # 현재 키 상태 표시 (마스킹)
+    $currentKey = $mcpNode.env?.ANTHROPIC_API_KEY
+    if ($currentKey) {
+        $masked = $currentKey.Substring(0, [Math]::Min(12, $currentKey.Length)) + "****"
+        Write-Host "  $L_API_CUR : [활성] $masked" -ForegroundColor Green
+    } else {
+        Write-Host "  $L_API_CUR : [비활성 — Haiku 판단 꺼짐]" -ForegroundColor DarkGray
+    }
+
+    # 키 입력 (SecureString)
+    $secKey = Read-Host $L_API_KEY -AsSecureString
+    $newKey = Get-PlainText $secKey
+
+    # env 노드 없으면 생성
+    if (-not $mcpNode.PSObject.Properties["env"]) {
+        $mcpNode | Add-Member -NotePropertyName "env" -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+
+    if ($newKey.Trim() -eq "") {
+        # 키 제거
+        $mcpNode.env.PSObject.Properties.Remove("ANTHROPIC_API_KEY")
+        Write-Host $L_API_CLR -ForegroundColor Yellow
+    } else {
+        $mcpNode.env | Add-Member -NotePropertyName "ANTHROPIC_API_KEY" -NotePropertyValue $newKey.Trim() -Force
+        Write-Host $L_API_SAV -ForegroundColor Green
+    }
+
+    # BOM 없이 저장
+    $json = $cfg | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding $false))
+    $newKey = $null
 }
 
 function Add-Account {
@@ -147,6 +234,7 @@ while ($running) {
         "2" { List-Accounts }
         "3" { Remove-Account }
         "4" { $running = $false }
+        "5" { Set-ApiKey }
         default { Write-Host $L_INVALID -ForegroundColor Red }
     }
 }

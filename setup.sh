@@ -128,3 +128,73 @@ while true; do
     *) echo -e "${RED}Invalid selection${NC}" ;;
   esac
 done
+
+# ── API 키 관리 ────────────────────────────────────────────────────
+find_config() {
+  local candidates=(
+    "$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+    "$HOME/.config/Claude/claude_desktop_config.json"
+  )
+  for p in "${candidates[@]}"; do
+    [ -f "$p" ] && echo "$p" && return
+  done
+  echo ""
+}
+
+set_api_key() {
+  echo ""
+  if [ "$LANG_KO" = "1" ]; then
+    echo "-- AI 스팸 필터 설정 (Claude Haiku) --"
+    echo "  [안내] API 키는 외부에 공유하지 마세요. config 파일에만 저장됩니다."
+  else
+    echo "-- AI Spam Filter (Claude Haiku API Key) --"
+    echo "  [Note] Keep your API key private. Stored only in the config file."
+  fi
+
+  CFG=$(find_config)
+  if [ -z "$CFG" ]; then
+    [ "$LANG_KO" = "1" ] && echo "  [ERROR] claude_desktop_config.json 없음. install.sh 먼저 실행하세요." \
+                          || echo "  [ERROR] config not found. Run install.sh first."
+    return
+  fi
+
+  # 현재 키 상태 출력
+  CURRENT_KEY=$(node -e "
+    const c = JSON.parse(require('fs').readFileSync('$CFG','utf-8'));
+    const k = c?.mcpServers?.['k-mail-mcp']?.env?.ANTHROPIC_API_KEY || '';
+    console.log(k);
+  " 2>/dev/null)
+
+  if [ -n "$CURRENT_KEY" ]; then
+    MASKED="${CURRENT_KEY:0:12}****"
+    [ "$LANG_KO" = "1" ] && echo "  현재 상태: [활성] $MASKED" || echo "  Status: [active] $MASKED"
+  else
+    [ "$LANG_KO" = "1" ] && echo "  현재 상태: [비활성 — Haiku 판단 꺼짐]" || echo "  Status: [disabled]"
+  fi
+
+  # 키 입력 (숨김)
+  [ "$LANG_KO" = "1" ] && PROMPT="  API 키 입력 (비워두면 비활성화): " || PROMPT="  API Key (blank to disable): "
+  read -rsp "$PROMPT" NEW_KEY
+  echo ""
+
+  # Node로 config 업데이트
+  node << JSEOF
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync('$CFG', 'utf-8'));
+if (!cfg.mcpServers?.['k-mail-mcp']) {
+  console.error('k-mail-mcp not found in config. Run install.sh first.');
+  process.exit(1);
+}
+const mcp = cfg.mcpServers['k-mail-mcp'];
+if (!mcp.env) mcp.env = {};
+const key = '${NEW_KEY}'.trim();
+if (key) {
+  mcp.env.ANTHROPIC_API_KEY = key;
+  console.log('[OK] API key saved. Restart Claude Desktop.');
+} else {
+  delete mcp.env.ANTHROPIC_API_KEY;
+  console.log('[OK] API key removed.');
+}
+fs.writeFileSync('$CFG', JSON.stringify(cfg, null, 2), 'utf-8');
+JSEOF
+}
