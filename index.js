@@ -143,7 +143,7 @@ function fetchHeadersAndSnippets(imap, seqnos) {
     const bag = new Map(); // seqno → { parts, attrs }
 
     const f = imap.fetch(seqnos, {
-      bodies: [HEADER_FIELDS, ""],   // "" = 전체 본문 (BODY.PEEK[])
+      bodies: [HEADER_FIELDS, "TEXT"],   // TEXT = 본문 텍스트
       struct: false,
     });
 
@@ -173,7 +173,7 @@ function fetchHeadersAndSnippets(imap, seqnos) {
           const m = await simpleParser(headerBuf);
 
           // 전체 본문에서 스니펫 추출
-          const rawSnippet = (item.parts[""] || Buffer.alloc(0)).toString("utf-8");
+          const rawSnippet = (item.parts["TEXT"] || Buffer.alloc(0)).toString("utf-8");
           const snippet = rawSnippet
             .replace(/=[\r\n]+/g, "")          // QP 연속 줄
             .replace(/=[0-9A-Fa-f]{2}/g, " ")  // QP 인코딩 문자
@@ -319,7 +319,7 @@ async function collectNewMails(account, sinceTime) {
     // 헤더 + 스니펫 동시 fetch
     const items = await fetchHeadersAndSnippets(imap, uids);
 
-    for (const { m, flags, snippet, messageId } of items) {
+    for (const { seqno, m, flags, snippet, messageId } of items) {
       const mailDate = m.date ? new Date(m.date) : null;
 
       // datetime 2차 필터 + 읽음 제외
@@ -336,7 +336,7 @@ async function collectNewMails(account, sinceTime) {
         (snippet.match(/[a-zA-Z]/g) || []).length / snippet.length > 0.6;
 
       result.mails.push({
-        uid,
+        uid: seqno,
         from,
         subject,
         date:        mailDate?.toISOString() || "",
