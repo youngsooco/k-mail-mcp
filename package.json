@@ -4,11 +4,13 @@
   "description": "MCP server for Korean mail services (Naver, Daum/Kakao) via IMAP",
   "main": "index.js",
   "type": "module",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "imap": "^0.8.19",
-    "mailparser": "^3.7.1",
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "imap": "^0.8.17",
+    "mailparser": "^3.7.1"
   }
 }
