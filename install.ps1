@@ -1,4 +1,4 @@
-# K-Mail-MCP Installer
+# K-Mail-MCP Installer — PowerShell (Node.js 불필요)
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -14,10 +14,8 @@ try {
     $nodeVer = & node --version 2>&1
     Write-Host "[OK] Node.js $nodeVer" -ForegroundColor Green
 } catch {
-    Write-Host "[ERROR] Node.js not found." -ForegroundColor Red
-    Write-Host "        Please install from https://nodejs.org"
-    Read-Host "Press Enter to exit"
-    exit 1
+    Write-Host "[ERROR] Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
+    Read-Host "Press Enter to exit"; exit 1
 }
 
 # npm install
@@ -27,12 +25,11 @@ Set-Location $ScriptDir
 & npm install --silent
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] npm install failed" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
+    Read-Host "Press Enter to exit"; exit 1
 }
 Write-Host "[OK] Packages installed" -ForegroundColor Green
 
-# Claude Desktop config 탐색
+# Claude Desktop config 경로 탐색
 Write-Host ""
 Write-Host "[2/3] Finding Claude Desktop config..." -ForegroundColor Yellow
 
@@ -41,59 +38,47 @@ $candidates = @(
     "$env:LOCALAPPDATA\Claude",
     "$env:APPDATA\Anthropic\Claude"
 )
-
 $configDir = $null
 foreach ($dir in $candidates) {
-    if (Test-Path $dir) {
-        $configDir = $dir
-        break
-    }
+    if (Test-Path $dir) { $configDir = $dir; break }
 }
-
 if (-not $configDir) {
     $configDir = "$env:APPDATA\Claude"
     New-Item -Path $configDir -ItemType Directory -Force | Out-Null
     Write-Host "[CREATED] $configDir" -ForegroundColor Yellow
 }
+$configFile = Join-Path $configDir "claude_desktop_config.json"
+Write-Host "[OK] Config: $configFile" -ForegroundColor Green
 
-$configFile = "$configDir\claude_desktop_config.json"
-Write-Host "[OK] Config path: $configFile" -ForegroundColor Green
-
-# JS 파일로 config 업데이트 (인라인 코드 충돌 방지)
+# PowerShell 내장 JSON으로 config 업데이트 (Node.js 불필요)
 Write-Host ""
 Write-Host "[3/3] Updating Claude Desktop config..." -ForegroundColor Yellow
 
-$indexPath  = Join-Path $ScriptDir "index.js"
-$tmpScript  = Join-Path $env:TEMP "kmailmcp_setup.js"
+$indexPath = Join-Path $ScriptDir "index.js"
 
-$jsContent = @"
-const fs = require('fs');
-const configFile = String.raw`$configFile`.replace(/\\/g, '\\\\');
-const indexPath  = String.raw`$indexPath`.replace(/\\/g, '\\\\');
-
-let config = {};
-if (fs.existsSync(configFile)) {
-    try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch(e) { config = {}; }
+if (Test-Path $configFile) {
+    try {
+        $config = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+        $config = [PSCustomObject]@{}
+    }
+} else {
+    $config = [PSCustomObject]@{}
 }
-if (!config.mcpServers) config.mcpServers = {};
-config.mcpServers['k-mail-mcp'] = { command: 'node', args: [indexPath] };
-fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
-console.log('[OK] Config updated: ' + configFile);
-"@
 
-# UTF-8 BOM 없이 저장
-[System.IO.File]::WriteAllText($tmpScript, $jsContent, [System.Text.Encoding]::UTF8)
-
-& node $tmpScript
-$exitCode = $LASTEXITCODE
-
-Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue
-
-if ($exitCode -ne 0) {
-    Write-Host "[ERROR] Config update failed" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
+if (-not $config.PSObject.Properties["mcpServers"]) {
+    $config | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue ([PSCustomObject]@{}) -Force
 }
+
+$serverEntry = [PSCustomObject]@{
+    command = "node"
+    args    = @($indexPath)
+}
+$config.mcpServers | Add-Member -NotePropertyName "k-mail-mcp" -NotePropertyValue $serverEntry -Force
+
+$config | ConvertTo-Json -Depth 10 | Set-Content -Path $configFile -Encoding UTF8
+
+Write-Host "[OK] Config updated: $configFile" -ForegroundColor Green
 
 # 완료
 Write-Host ""
