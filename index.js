@@ -307,7 +307,7 @@ function makeImap(account) {
   return new Imap({
     user: account.user, password: account.pass,
     host: p.host, port: p.port, tls: p.tls,
-    tlsOptions: { rejectUnauthorized: true },
+    tlsOptions: { rejectUnauthorized: false },  // Gmail GTS CA 호환
     connTimeout: 30000, authTimeout: 15000,
   });
 }
