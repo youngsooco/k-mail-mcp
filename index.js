@@ -27,11 +27,12 @@ import path                     from "path";
 import { fileURLToPath }        from "url";
 
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
-const ACCOUNTS_FILE  = path.join(__dirname, "accounts.enc.json");
-const KEY_FILE       = path.join(__dirname, ".master.key");
-const META_FILE      = path.join(__dirname, ".instance.json");
-const LAST_RUN_FILE  = path.join(__dirname, "last_run.json");
-const SETTINGS_FILE  = path.join(__dirname, "settings.enc.json");
+const ACCOUNTS_FILE   = path.join(__dirname, "accounts.enc.json");
+const KEY_FILE        = path.join(__dirname, ".master.key");
+const META_FILE       = path.join(__dirname, ".instance.json");
+const LAST_RUN_FILE   = path.join(__dirname, "last_run.json");
+const SETTINGS_FILE   = path.join(__dirname, "settings.enc.json");
+const CATEGORIES_FILE = path.join(__dirname, "categories.json");
 
 // ══════════════════════════════════════════════════════
 //  인스턴스 / 키 / 계정
@@ -218,21 +219,45 @@ function buildWebLink(service, messageId) {
 
 // ══════════════════════════════════════════════════════
 //  카테고리 분류
+//  categories.json이 있으면 사용자 정의 규칙 로드,
+//  없으면 기본값(DEFAULT_CATEGORY_RULES) 사용
 // ══════════════════════════════════════════════════════
-const CATEGORY_RULES = [
-  { name: "🤖 AI/머신러닝",   test: (f,s)    => /openai|anthropic|gemini|claude|gpt|llm|ai |인공지능|머신러닝|딥러닝|hugging/i.test(f+s) },
-  { name: "💻 개발/기술",     test: (f,s)    => /github|gitlab|npm|docker|kubernetes|aws|gcp|azure|bytebytego|devops|deploy|release|개발|엔지니어/i.test(f+s) },
-  { name: "📰 뉴스/미디어",   test: (f,s,nl) => nl && /뉴스|news|daily|weekly|digest|newsletter|브리핑|roundup|techcrunch|mit tech/i.test(f+s) },
-  { name: "💰 금융/결제",     test: (f,s)    => /입금|출금|결제|거래|카드|계좌|은행|증권|투자|주식|코인|환급|세금|보험/i.test(f+s) },
-  { name: "🛒 쇼핑/이커머스", test: (f,s)    => /주문|배송|도착|쿠팡|네이버쇼핑|11번가|지마켓|올리브영|order|shipped|tracking|구매확인/i.test(f+s) },
-  { name: "📣 광고/프로모션", test: (f,s)    => /할인|쿠폰|이벤트|특가|혜택|포인트|적립|sale|promotion|offer|한정|선착순/i.test(f+s) },
-  { name: "💼 업무/비즈니스", test: (f,s)    => /invoice|견적|계약|미팅|회의|프로젝트|업무|협업|slack|notion|jira|zoom|meet/i.test(f+s) },
-  { name: "🔐 보안/인증",     test: (f,s)    => /인증|로그인|비밀번호|보안|otp|verify|password|security|alert|unauthorized/i.test(f+s) },
-  { name: "👥 소셜/커뮤니티", test: (f,s)    => /linkedin|facebook|instagram|twitter|youtube|카카오|라인|텔레그램|커뮤니티/i.test(f+s) },
+const DEFAULT_CATEGORY_RULES = [
+  { name: "🤖 AI/머신러닝",   keywords: ["openai","anthropic","gemini","claude","gpt","llm","ai ","인공지능","머신러닝","딥러닝","hugging"] },
+  { name: "💻 개발/기술",     keywords: ["github","gitlab","npm","docker","kubernetes","aws","gcp","azure","bytebytego","devops","deploy","release","개발","엔지니어"] },
+  { name: "📰 뉴스/미디어",   keywords: ["뉴스","news","daily","weekly","digest","newsletter","브리핑","roundup","techcrunch","mit tech"], newsletterOnly: true },
+  { name: "💰 금융/결제",     keywords: ["입금","출금","결제","거래","카드","계좌","은행","증권","투자","주식","코인","환급","세금","보험"] },
+  { name: "🛒 쇼핑/이커머스", keywords: ["주문","배송","도착","쿠팡","네이버쇼핑","11번가","지마켓","올리브영","order","shipped","tracking","구매확인"] },
+  { name: "📣 광고/프로모션", keywords: ["할인","쿠폰","이벤트","특가","혜택","포인트","적립","sale","promotion","offer","한정","선착순"] },
+  { name: "💼 업무/비즈니스", keywords: ["invoice","견적","계약","미팅","회의","프로젝트","업무","협업","slack","notion","jira","zoom","meet"] },
+  { name: "🔐 보안/인증",     keywords: ["인증","로그인","비밀번호","보안","otp","verify","password","security","alert","unauthorized"] },
+  { name: "👥 소셜/커뮤니티", keywords: ["linkedin","facebook","instagram","twitter","youtube","카카오","라인","텔레그램","커뮤니티"] },
 ];
 
+/**
+ * categories.json 로드 (없으면 기본값 반환)
+ * 형식: [{ "name": "📁 카테고리명", "keywords": ["키워드1","키워드2"], "newsletterOnly": false }]
+ */
+function loadCategoryRules() {
+  try {
+    if (fs.existsSync(CATEGORIES_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(CATEGORIES_FILE, "utf-8"));
+      if (Array.isArray(raw) && raw.length > 0) return raw;
+    }
+  } catch (e) {
+    console.error("[categories] 로드 실패, 기본값 사용:", e.message);
+  }
+  return DEFAULT_CATEGORY_RULES;
+}
+
 function classifyEmail(from, subject, isNewsletter) {
-  for (const r of CATEGORY_RULES) if (r.test(from, subject, isNewsletter)) return r.name;
+  const rules = loadCategoryRules();
+  const text = (from + " " + subject).toLowerCase();
+  for (const r of rules) {
+    if (r.newsletterOnly && !isNewsletter) continue;
+    const keywords = r.keywords || [];
+    if (keywords.some(kw => text.includes(kw.toLowerCase()))) return r.name;
+  }
   return isNewsletter ? "📰 뉴스/미디어" : "📂 기타";
 }
 
@@ -739,6 +764,167 @@ server.tool(
     } finally {
       try { imap.end(); } catch {}
     }
+  }
+);
+
+// ── Tool 6: 카테고리 자동 생성 ────────────────────────
+/**
+ * 실제 메일 헤더(From/Subject)만 경량 수집
+ * 본문 불필요 — 토큰·시간 최소화
+ */
+async function fetchMailSamples(account, limit) {
+  const imap = makeImap(account);
+  const samples = [];
+  try {
+    await imapConnect(imap);
+    let mailboxName = "INBOX";
+    if (account.service === "daum") {
+      const boxes = await listBoxes(imap);
+      for (const c of DAUM_INBOX_CANDIDATES)
+        if (boxes.includes(c)) { mailboxName = c; break; }
+    }
+    const box = await openBox(imap, mailboxName);
+    const total = box.messages.total;
+    if (total === 0) return samples;
+
+    const start = Math.max(1, total - limit + 1);
+    await new Promise((res, rej) => {
+      const f = imap.fetch(`${start}:${total}`, {
+        bodies: "HEADER.FIELDS (FROM SUBJECT)",
+        struct: false,
+      });
+      f.on("message", (msg) => {
+        const chunks = [];
+        msg.on("body", (stream) => stream.on("data", (c) => chunks.push(c)));
+        msg.once("end", () => {
+          const raw     = Buffer.concat(chunks).toString("utf-8");
+          const from    = (raw.match(/^From:\s*(.+)/im)?.[1] || "").trim();
+          const subject = (raw.match(/^Subject:\s*(.+)/im)?.[1] || "").trim();
+          if (from || subject) samples.push({ from, subject });
+        });
+      });
+      f.once("error", rej);
+      f.once("end",   res);
+    });
+  } catch (e) {
+    console.error(`[samples] ${account.label}:`, e.message);
+  } finally {
+    try { imap.end(); } catch {}
+  }
+  return samples;
+}
+
+server.tool(
+  "generate_categories",
+  `실제 메일 패턴을 분석해 맞춤 카테고리를 자동 생성합니다.
+Haiku AI가 발신자/제목 패턴을 보고 사용자 맞춤 categories.json을 생성합니다.
+API 키(setup.bat 4번)가 등록되어 있어야 합니다.
+overwrite=true로 설정해야 파일을 실제로 저장합니다 (기본: 미리보기만).`,
+  {
+    sample_size: z.number().min(10).max(200).default(50)
+      .describe("분석할 최근 메일 수 (기본 50, 최대 200)"),
+    overwrite: z.boolean().default(false)
+      .describe("categories.json 덮어쓰기 여부 (기본: false = 미리보기)"),
+  },
+  async ({ sample_size, overwrite }) => {
+    const apiKey = loadApiKey();
+    if (apiKey.length <= 10) {
+      return { content: [{ type: "text", text: JSON.stringify({
+        error: "Anthropic API 키가 필요합니다. setup.bat 4번 메뉴에서 등록하세요.",
+      }) }] };
+    }
+
+    const accounts = loadAccounts();
+    if (!accounts.length) {
+      return { content: [{ type: "text", text: JSON.stringify({
+        error: "등록된 계정이 없습니다. setup.bat 1번으로 계정을 먼저 등록하세요.",
+      }) }] };
+    }
+
+    // ── 전체 계정에서 경량 샘플 수집 ───────────────────
+    const perAccount = Math.ceil(sample_size / accounts.length);
+    const sampleResults = await Promise.allSettled(
+      accounts.map(acc => fetchMailSamples(acc, perAccount))
+    );
+
+    const allSamples = sampleResults
+      .flatMap((r, i) =>
+        r.status === "fulfilled"
+          ? r.value.map(s => ({ ...s, account: accounts[i].label }))
+          : []
+      )
+      .slice(0, sample_size);
+
+    if (allSamples.length === 0) {
+      return { content: [{ type: "text", text: JSON.stringify({
+        error: "수집된 메일 샘플이 없습니다. reset_last_run 후 재시도하거나 계정 연결을 확인하세요.",
+      }) }] };
+    }
+
+    // ── Haiku 패턴 분석 ────────────────────────────────
+    const sampleText = allSamples
+      .map(s => `From: ${s.from}\nSubject: ${s.subject}`)
+      .join("\n---\n");
+
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type":      "application/json",
+        "x-api-key":         apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model:      "claude-haiku-4-5-20251001",
+        max_tokens: 1500,
+        system: `이메일 패턴 분석가. JSON 배열만 반환. 마크다운·설명 없음.
+형식: [{"name":"이모지 카테고리명","keywords":["키워드1","키워드2"],"newsletterOnly":false}]
+규칙:
+- name: 이모지 1개 + 한국어 카테고리명 (예: "🏥 의료/헬스케어")
+- keywords: from+subject에서 추출한 실제 패턴, 소문자, 3~15개
+- newsletterOnly: 뉴스레터(List-Unsubscribe)에만 해당하면 true
+- 5~10개 카테고리, 반드시 실제 패턴 기반으로 생성`,
+        messages: [{
+          role:    "user",
+          content: `다음 ${allSamples.length}개 메일 샘플을 분석해 이 사용자에게 최적화된 카테고리 규칙을 만들어줘:\n\n${sampleText}`,
+        }],
+      }),
+    });
+
+    if (!resp.ok) {
+      return { content: [{ type: "text", text: JSON.stringify({
+        error: `Haiku API 오류: HTTP ${resp.status}`,
+      }) }] };
+    }
+
+    const data    = await resp.json();
+    const rawText = (data.content?.[0]?.text || "").trim().replace(/```json|```/g, "").trim();
+
+    let categories;
+    try {
+      categories = JSON.parse(rawText);
+      if (!Array.isArray(categories) || categories.length === 0) throw new Error("빈 배열");
+    } catch (e) {
+      return { content: [{ type: "text", text: JSON.stringify({
+        error: "카테고리 파싱 실패", rawResponse: rawText, parseError: e.message,
+      }) }] };
+    }
+
+    // ── 저장 여부 결정 ─────────────────────────────────
+    const fileExists = fs.existsSync(CATEGORIES_FILE);
+    const shouldSave = overwrite || !fileExists;
+
+    if (shouldSave) {
+      fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(categories, null, 2));
+    }
+
+    return { content: [{ type: "text", text: JSON.stringify({
+      status:              shouldSave ? "✅ 저장됨" : "👀 미리보기 (저장하려면 overwrite:true로 재실행)",
+      samplesAnalyzed:     allSamples.length,
+      categoriesGenerated: categories.length,
+      categories,
+      savedTo:             shouldSave ? CATEGORIES_FILE : null,
+      tip:                 shouldSave ? "check_new_mails를 실행하면 새 카테고리가 즉시 적용됩니다." : null,
+    }, null, 2) }] };
   }
 );
 

@@ -1,0 +1,39 @@
+[
+  {
+    "name": "🤖 AI/머신러닝",
+    "keywords": ["openai", "anthropic", "gemini", "claude", "gpt", "llm", "ai ", "인공지능", "머신러닝", "딥러닝", "hugging"]
+  },
+  {
+    "name": "💻 개발/기술",
+    "keywords": ["github", "gitlab", "npm", "docker", "kubernetes", "aws", "gcp", "azure", "bytebytego", "devops", "deploy", "release", "개발", "엔지니어"]
+  },
+  {
+    "name": "📰 뉴스/미디어",
+    "keywords": ["뉴스", "news", "daily", "weekly", "digest", "newsletter", "브리핑", "roundup", "techcrunch", "mit tech"],
+    "newsletterOnly": true
+  },
+  {
+    "name": "💰 금융/결제",
+    "keywords": ["입금", "출금", "결제", "거래", "카드", "계좌", "은행", "증권", "투자", "주식", "코인", "환급", "세금", "보험"]
+  },
+  {
+    "name": "🛒 쇼핑/이커머스",
+    "keywords": ["주문", "배송", "도착", "쿠팡", "네이버쇼핑", "11번가", "지마켓", "올리브영", "order", "shipped", "tracking", "구매확인"]
+  },
+  {
+    "name": "📣 광고/프로모션",
+    "keywords": ["할인", "쿠폰", "이벤트", "특가", "혜택", "포인트", "적립", "sale", "promotion", "offer", "한정", "선착순"]
+  },
+  {
+    "name": "💼 업무/비즈니스",
+    "keywords": ["invoice", "견적", "계약", "미팅", "회의", "프로젝트", "업무", "협업", "slack", "notion", "jira", "zoom", "meet"]
+  },
+  {
+    "name": "🔐 보안/인증",
+    "keywords": ["인증", "로그인", "비밀번호", "보안", "otp", "verify", "password", "security", "alert", "unauthorized"]
+  },
+  {
+    "name": "👥 소셜/커뮤니티",
+    "keywords": ["linkedin", "facebook", "instagram", "twitter", "youtube", "카카오", "라인", "텔레그램", "커뮤니티"]
+  }
+]
