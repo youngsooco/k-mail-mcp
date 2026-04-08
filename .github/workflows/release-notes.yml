@@ -1,0 +1,125 @@
+name: Auto Release Notes
+
+on:
+  push:
+    tags:
+      - "v*"  # v1.0.0, v1.2.3 형태의 태그
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get commits since last tag
+        id: commits
+        run: |
+          # 이전 태그 찾기
+          PREV_TAG=$(git tag --sort=-version:refname | sed -n '2p')
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+          echo "current_tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
+          echo "prev_tag=$PREV_TAG"       >> $GITHUB_OUTPUT
+
+          if [ -z "$PREV_TAG" ]; then
+            # 첫 릴리즈인 경우 전체 커밋
+            git log --oneline --no-merges | head -30 > commits.txt
+          else
+            git log ${PREV_TAG}..HEAD --oneline --no-merges | head -30 > commits.txt
+          fi
+
+          echo "Commits to summarize:"
+          cat commits.txt
+
+      - name: Generate release notes with Claude
+        uses: actions/github-script@v7
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs          = require("fs");
+            const currentTag  = "${{ steps.commits.outputs.current_tag }}";
+            const prevTag     = "${{ steps.commits.outputs.prev_tag }}" || "첫 릴리즈";
+            const commits     = fs.readFileSync("commits.txt", "utf-8").trim();
+
+            const systemPrompt = `
+You are a release notes writer for K-Mail-MCP.
+
+Write professional release notes in Korean based on git commits.
+
+Format:
+## 변경사항
+
+### ✨ 새 기능
+- ...
+
+### 🐛 버그 수정
+- ...
+
+### 🔐 보안
+- ...
+
+### 📖 문서
+- ...
+
+### ⚙️ 기타
+- ...
+
+(해당 없는 섹션은 생략)
+
+Rules:
+- Each bullet: clear user-facing description (not raw commit message)
+- Group related commits into one bullet if needed
+- Keep technical jargon minimal
+- Under 300 words total
+            `.trim();
+
+            const userPrompt = `
+New release: ${currentTag} (from ${prevTag})
+
+Git commits:
+${commits}
+
+Write release notes for this version.
+            `.trim();
+
+            const response = await fetch("https://api.anthropic.com/v1/messages", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-api-key": process.env.ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+              },
+              body: JSON.stringify({
+                model: "claude-sonnet-4-20250514",
+                max_tokens: 1024,
+                system: systemPrompt,
+                messages: [{ role: "user", content: userPrompt }],
+              }),
+            });
+
+            const data  = await response.json();
+            const notes = data.content?.[0]?.text || "릴리즈 노트를 생성할 수 없었습니다.";
+
+            const body = `${notes}\n\n---\n**설치:** [INSTALL_GUIDE.md](INSTALL_GUIDE.md)\n**전체 변경사항:** [\`${prevTag}...${currentTag}\`](../../compare/${prevTag}...${currentTag})`;
+
+            // GitHub Release 생성
+            await github.rest.repos.createRelease({
+              owner:            context.repo.owner,
+              repo:             context.repo.repo,
+              tag_name:         currentTag,
+              name:             `K-Mail-MCP ${currentTag}`,
+              body,
+              draft:            false,
+              prerelease:       currentTag.includes("-"),
+            });
+
+            core.info(`✅ Release ${currentTag} created`);

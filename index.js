@@ -1,0 +1,563 @@
+/**
+ * Korean Mail MCP Server v4
+ *
+ * 변경사항:
+ *  - snippet 필드: 본문 앞 400자 미리보기 (영문 포함 → Claude가 번역+요약)
+ *  - webLink 필드: Gmail 딥링크 / 네이버·다음은 받은편지함 URL
+ *  - Message-ID 헤더 수집 → Gmail rfc822msgid 검색 URL 생성
+ */
+
+import { McpServer }            from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z }                    from "zod";
+import Imap                     from "imap";
+import { simpleParser }         from "mailparser";
+import crypto                   from "crypto";
+import fs                       from "fs";
+import path                     from "path";
+import { fileURLToPath }        from "url";
+
+const __dirname      = path.dirname(fileURLToPath(import.meta.url));
+const ACCOUNTS_FILE  = path.join(__dirname, "accounts.enc.json");
+const KEY_FILE       = path.join(__dirname, ".master.key");
+const META_FILE      = path.join(__dirname, ".instance.json");
+const LAST_RUN_FILE  = path.join(__dirname, "last_run.json");
+
+// ══════════════════════════════════════════════════════
+//  인스턴스 / 키
+// ══════════════════════════════════════════════════════
+function getInstanceId() {
+  if (!fs.existsSync(META_FILE)) return "unknown";
+  try { return JSON.parse(fs.readFileSync(META_FILE, "utf-8")).instanceId; }
+  catch { return "unknown"; }
+}
+
+function loadKeyBuf() {
+  if (!fs.existsSync(KEY_FILE))
+    throw new Error("마스터 키(.master.key) 없음 — node setup.js 먼저 실행");
+  return Buffer.from(fs.readFileSync(KEY_FILE, "utf-8").trim(), "hex");
+}
+
+function decrypt(enc, keyBuf) {
+  try {
+    const d = crypto.createDecipheriv(
+      "aes-256-gcm", keyBuf, Buffer.from(enc.iv, "hex")
+    );
+    d.setAuthTag(Buffer.from(enc.authTag, "hex"));
+    return Buffer.concat([
+      d.update(Buffer.from(enc.ciphertext, "hex")),
+      d.final(),
+    ]).toString("utf-8");
+  } catch {
+    throw new Error("복호화 실패 — 이 인스턴스의 키로 암호화된 데이터인지 확인하세요.");
+  }
+}
+
+function loadAccounts() {
+  if (!fs.existsSync(ACCOUNTS_FILE)) return [];
+  const keyBuf = loadKeyBuf();
+  return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8")).map((a) => ({
+    id: a.id, service: a.service, label: a.label,
+    user: decrypt(a.encUser, keyBuf),
+    pass: decrypt(a.encPass, keyBuf),
+  }));
+}
+
+// ══════════════════════════════════════════════════════
+//  last_run 관리
+// ══════════════════════════════════════════════════════
+function loadLastRun()        { try { return JSON.parse(fs.readFileSync(LAST_RUN_FILE, "utf-8")); } catch { return {}; } }
+function saveLastRun(data)    { fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(data, null, 2)); }
+
+function getLastRunFor(id) {
+  const d = loadLastRun()[id];
+  if (d) return new Date(d);
+  const t = new Date(); t.setHours(t.getHours() - 24); return t;
+}
+
+function updateLastRunFor(id, ts = new Date()) {
+  const d = loadLastRun(); d[id] = ts.toISOString(); saveLastRun(d);
+}
+
+// ══════════════════════════════════════════════════════
+//  IMAP 프리셋
+// ══════════════════════════════════════════════════════
+const PRESETS = {
+  naver: { host: "imap.naver.com", port: 993, tls: true },
+  daum:  { host: "imap.daum.net",  port: 993, tls: true },
+  gmail: { host: "imap.gmail.com", port: 993, tls: true },
+};
+
+const DAUM_INBOX_CANDIDATES = ["INBOX", "받은메일함", "전체메일"];
+
+function makeImap(account) {
+  const p = PRESETS[account.service] || PRESETS.naver;
+  return new Imap({
+    user: account.user, password: account.pass,
+    host: p.host, port: p.port, tls: p.tls,
+    tlsOptions: { rejectUnauthorized: false },
+    connTimeout: 20000, authTimeout: 10000,
+  });
+}
+
+function imapConnect(imap) {
+  return new Promise((res, rej) => {
+    imap.once("ready", res); imap.once("error", rej); imap.connect();
+  });
+}
+
+function openBox(imap, name) {
+  return new Promise((res, rej) =>
+    imap.openBox(name, true, (e, b) => e ? rej(e) : res(b))
+  );
+}
+
+function listBoxes(imap) {
+  return new Promise((res, rej) =>
+    imap.getBoxes((e, boxes) => e ? rej(e) : res(Object.keys(boxes)))
+  );
+}
+
+function searchImap(imap, criteria) {
+  return new Promise((res, rej) =>
+    imap.search(criteria, (e, u) => e ? rej(e) : res(u || []))
+  );
+}
+
+// ══════════════════════════════════════════════════════
+//  헤더 + 본문 스니펫 동시 fetch
+//  bodies 배열에 헤더 + BODY[TEXT]<0.900> 함께 요청
+// ══════════════════════════════════════════════════════
+const HEADER_FIELDS =
+  "HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE MESSAGE-ID X-ORIGINAL-TO)";
+
+function fetchHeadersAndSnippets(imap, uids) {
+  return new Promise((res, rej) => {
+    if (!uids.length) { res([]); return; }
+
+    const bag = new Map(); // uid → { parts, attrs }
+
+    const f = imap.fetch(uids, {
+      bodies: [HEADER_FIELDS, "BODY[TEXT]<0.900>"],
+      struct: true,
+    });
+
+    f.on("message", (msg) => {
+      const parts = {}; let attrs = {};
+
+      msg.on("body", (stream, info) => {
+        const chunks = [];
+        stream.on("data",  (c)  => chunks.push(c));
+        stream.on("end",   ()   => { parts[info.which] = Buffer.concat(chunks); });
+      });
+      msg.once("attributes", (a) => { attrs = a; });
+      msg.once("end", () => bag.set(attrs.uid, { parts, attrs }));
+    });
+
+    f.once("error", rej);
+    f.once("end", async () => {
+      try {
+        const results = [];
+        for (const uid of uids) {
+          const item = bag.get(uid);
+          if (!item) continue;
+
+          // 헤더 파싱
+          const headerBuf = item.parts[HEADER_FIELDS] || Buffer.alloc(0);
+          const m = await simpleParser(headerBuf);
+
+          // 스니펫 정제
+          // QP(quoted-printable) 소프트 줄바꿈 제거, HTML 태그 제거, 공백 정리
+          const rawSnippet = (item.parts["BODY[TEXT]<0.900>"] || Buffer.alloc(0))
+            .toString("utf-8");
+          const snippet = rawSnippet
+            .replace(/=\r?\n/g, "")          // QP 연속 줄
+            .replace(/=[0-9A-Fa-f]{2}/g, " ") // QP 인코딩 문자
+            .replace(/<[^>]{0,200}>/g, " ")   // HTML 태그
+            .replace(/&[a-z]{2,6};/gi, " ")   // HTML 엔티티
+            .replace(/https?:\/\/\S+/g, "")   // URL 제거
+            .replace(/\s+/g, " ")
+            .trim()
+            .substring(0, 400);
+
+          results.push({
+            uid,
+            m,
+            flags:     item.attrs.flags || [],
+            snippet,
+            messageId: (m.messageId || "").replace(/[<>]/g, "").trim(),
+          });
+        }
+        res(results);
+      } catch (e) { rej(e); }
+    });
+  });
+}
+
+// 전체 본문 fetch (read_email 전용)
+function fetchFullBody(imap, uid) {
+  return new Promise((res, rej) => {
+    const chunks = [];
+    const f = imap.fetch([uid], { bodies: "", struct: true });
+    f.on("message", (msg) => msg.on("body", (s) => s.on("data", (c) => chunks.push(c))));
+    f.once("error", rej);
+    f.once("end", async () => {
+      try { res(await simpleParser(Buffer.concat(chunks))); } catch (e) { rej(e); }
+    });
+  });
+}
+
+function toImapDate(d) {
+  const M = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${d.getDate()}-${M[d.getMonth()]}-${d.getFullYear()}`;
+}
+
+// ══════════════════════════════════════════════════════
+//  웹 링크 생성
+//  Gmail  → rfc822msgid 딥링크 (메일 직접 열림)
+//  Naver  → 받은편지함 (직접 링크 없음)
+//  Daum   → 받은편지함 (직접 링크 없음)
+// ══════════════════════════════════════════════════════
+function buildWebLink(service, messageId) {
+  if (service === "gmail" && messageId) {
+    // Gmail은 rfc822msgid로 특정 메일 직접 접근 가능
+    return `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
+  }
+  if (service === "naver") return "https://mail.naver.com/";
+  if (service === "daum")  return "https://mail.daum.net/";
+  return null;
+}
+
+// ══════════════════════════════════════════════════════
+//  카테고리 분류
+// ══════════════════════════════════════════════════════
+const CATEGORY_RULES = [
+  { name: "🤖 AI/머신러닝",   test: (f,s)    => /openai|anthropic|gemini|claude|gpt|llm|ai |인공지능|머신러닝|딥러닝|hugging/i.test(f+s) },
+  { name: "💻 개발/기술",     test: (f,s)    => /github|gitlab|npm|docker|kubernetes|aws|gcp|azure|bytebytego|devops|deploy|release|개발|엔지니어/i.test(f+s) },
+  { name: "📰 뉴스/미디어",   test: (f,s,nl) => nl && /뉴스|news|daily|weekly|digest|newsletter|브리핑|roundup|techcrunch|mit tech/i.test(f+s) },
+  { name: "💰 금융/결제",     test: (f,s)    => /입금|출금|결제|거래|카드|계좌|은행|증권|투자|주식|코인|환급|세금|보험/i.test(f+s) },
+  { name: "🛒 쇼핑/이커머스", test: (f,s)    => /주문|배송|도착|쿠팡|네이버쇼핑|11번가|지마켓|올리브영|order|shipped|tracking|구매확인/i.test(f+s) },
+  { name: "📣 광고/프로모션", test: (f,s)    => /할인|쿠폰|이벤트|특가|혜택|포인트|적립|sale|promotion|offer|한정|선착순/i.test(f+s) },
+  { name: "💼 업무/비즈니스", test: (f,s)    => /invoice|견적|계약|미팅|회의|프로젝트|업무|협업|slack|notion|jira|zoom|meet/i.test(f+s) },
+  { name: "🔐 보안/인증",     test: (f,s)    => /인증|로그인|비밀번호|보안|otp|verify|password|security|alert|unauthorized/i.test(f+s) },
+  { name: "👥 소셜/커뮤니티", test: (f,s)    => /linkedin|facebook|instagram|twitter|youtube|카카오|라인|텔레그램|커뮤니티/i.test(f+s) },
+];
+
+function classifyEmail(from, subject, isNewsletter) {
+  for (const r of CATEGORY_RULES) {
+    if (r.test(from, subject, isNewsletter)) return r.name;
+  }
+  return isNewsletter ? "📰 뉴스/미디어" : "📂 기타";
+}
+
+// ══════════════════════════════════════════════════════
+//  단일 계정 메일 수집
+// ══════════════════════════════════════════════════════
+const MAX_FETCH = 200;
+
+async function collectNewMails(account, sinceTime) {
+  const result = {
+    accountId: account.id, accountLabel: account.label,
+    service: account.service, mailbox: null, mails: [], error: null,
+  };
+
+  const imap = makeImap(account);
+  try {
+    await imapConnect(imap);
+
+    // 다음 메일함 자동 감지
+    let mailboxName = "INBOX";
+    if (account.service === "daum") {
+      const boxes = await listBoxes(imap);
+      for (const c of DAUM_INBOX_CANDIDATES) {
+        if (boxes.includes(c)) { mailboxName = c; break; }
+      }
+    }
+    result.mailbox = mailboxName;
+    await openBox(imap, mailboxName);
+
+    const uids = (
+      await searchImap(imap, ["UNSEEN", ["SINCE", toImapDate(sinceTime)]])
+    ).slice(-MAX_FETCH);
+
+    if (!uids.length) return result;
+
+    // 헤더 + 스니펫 동시 fetch
+    const items = await fetchHeadersAndSnippets(imap, uids);
+
+    for (const { uid, m, flags, snippet, messageId } of items) {
+      const mailDate = m.date ? new Date(m.date) : null;
+
+      // datetime 2차 필터 + 읽음 제외
+      if (mailDate && mailDate <= sinceTime) continue;
+      if (flags.includes("\\Seen")) continue;
+
+      const from         = m.from?.text || "";
+      const subject      = m.subject   || "(제목 없음)";
+      const isNewsletter = !!(m.headers?.get("list-unsubscribe"));
+      const originalTo   = m.headers?.get("x-original-to")?.[0] || "";
+
+      // 영문 여부 감지 (snippet 기준 — Claude가 번역 판단에 사용)
+      const isEnglish = snippet.length > 20 &&
+        (snippet.match(/[a-zA-Z]/g) || []).length / snippet.length > 0.6;
+
+      result.mails.push({
+        uid,
+        from,
+        subject,
+        date:        mailDate?.toISOString() || "",
+        snippet,                                           // 본문 앞 400자
+        isEnglish,                                         // 영문 여부 플래그
+        aiCategory:  classifyEmail(from, subject, isNewsletter),
+        mailRef:     mailboxName + (originalTo ? ` → ${originalTo}` : ""),
+        isNewsletter,
+        webLink:     buildWebLink(account.service, messageId), // 메일 링크
+      });
+    }
+
+    result.mails.sort((a, b) => b.date.localeCompare(a.date));
+  } catch (e) {
+    result.error = e.message;
+  } finally {
+    try { imap.end(); } catch {}
+  }
+
+  return result;
+}
+
+// ══════════════════════════════════════════════════════
+//  MCP 서버
+// ══════════════════════════════════════════════════════
+const server = new McpServer({ name: "korean-mail-mcp", version: "4.0.0" });
+
+// ── Tool 1: 계정 목록 ─────────────────────────────────
+server.tool(
+  "list_accounts",
+  "등록된 메일 계정 목록을 반환합니다. (비밀번호 미포함)",
+  {},
+  async () => {
+    const keyBuf     = loadKeyBuf();
+    const raw        = fs.existsSync(ACCOUNTS_FILE)
+      ? JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf-8")) : [];
+    const lastRuns   = loadLastRun();
+    const instanceId = getInstanceId();
+
+    const accounts = raw.map((a) => {
+      let userDisplay = "(복호화 실패)";
+      try { userDisplay = decrypt(a.encUser, keyBuf); } catch {}
+      return {
+        id: a.id, service: a.service, label: a.label,
+        user: userDisplay,
+        lastRun:   lastRuns[a.id]  || null,
+        updatedAt: a.updatedAt     || null,
+      };
+    });
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ instanceId: instanceId.slice(0,8)+"...", accounts }),
+      }],
+    };
+  }
+);
+
+// ── Tool 2: 새 메일 수집 ──────────────────────────────
+server.tool(
+  "check_new_mails",
+  [
+    "마지막 실행 이후 읽지 않은 메일을 전체 계정에서 수집합니다.",
+    "각 메일에는 snippet(본문 미리보기), isEnglish(영문 여부), aiCategory(AI 분류),",
+    "mailRef(원본 메일함 참조), webLink(메일 링크 또는 받은편지함 URL)가 포함됩니다.",
+    "영문 메일(isEnglish=true)은 snippet을 번역·요약해서 사용자에게 제공하세요.",
+    "webLink로 사용자가 직접 메일을 확인할 수 있도록 링크를 함께 표시하세요.",
+  ].join(" "),
+  {
+    account_label: z.string().default("all"),
+    override_since: z.string().default(""),
+    max_per_account: z.number().min(1).max(200).default(50),
+  },
+  async ({ account_label, override_since, max_per_account }) => {
+    const allAccounts = loadAccounts();
+    if (!allAccounts.length) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음. node setup.js 실행 필요" }) }] };
+    }
+
+    const targets = account_label === "all"
+      ? allAccounts
+      : allAccounts.filter((a) => a.label === account_label || a.user === account_label);
+
+    if (!targets.length) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: `계정 '${account_label}' 없음` }) }] };
+    }
+
+    const runAt = new Date();
+
+    const settled = await Promise.allSettled(
+      targets.map((acc) => {
+        const sinceTime = override_since
+          ? new Date(override_since)
+          : getLastRunFor(acc.id);
+        return collectNewMails(acc, sinceTime).then((r) => {
+          if (!r.error) updateLastRunFor(acc.id, runAt);
+          return r;
+        });
+      })
+    );
+
+    const results = settled.map((s, i) =>
+      s.status === "fulfilled"
+        ? s.value
+        : { accountLabel: targets[i].label, error: s.reason?.message, mails: [] }
+    );
+
+    const allMails = results
+      .flatMap((r) =>
+        r.mails.slice(0, max_per_account).map((m) => ({
+          ...m, account: r.accountLabel, mailbox: r.mailbox,
+        }))
+      )
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const categorySummary = allMails.reduce((acc, m) => {
+      acc[m.aiCategory] = (acc[m.aiCategory] || 0) + 1; return acc;
+    }, {});
+
+    const englishCount = allMails.filter((m) => m.isEnglish).length;
+    const errors = results.filter((r) => r.error).map((r) => ({ account: r.accountLabel, error: r.error }));
+
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          runAt:           runAt.toISOString(),
+          totalMails:      allMails.length,
+          englishMails:    englishCount,
+          categorySummary,
+          mails:           allMails,
+          errors:          errors.length ? errors : undefined,
+        }, null, 2),
+      }],
+    };
+  }
+);
+
+// ── Tool 3: 메일 본문 전체 읽기 ───────────────────────
+server.tool(
+  "read_email",
+  [
+    "특정 메일의 전체 본문을 읽습니다.",
+    "영문 메일인 경우 번역·요약해서 제공하고, webLink로 원본 확인 링크도 함께 표시하세요.",
+  ].join(" "),
+  {
+    account_label: z.string(),
+    uid:           z.number(),
+    mailbox:       z.string().default("INBOX"),
+  },
+  async ({ account_label, uid, mailbox }) => {
+    const acc = loadAccounts().find(
+      (a) => a.label === account_label || a.user === account_label
+    );
+    if (!acc) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
+    }
+
+    const imap = makeImap(acc);
+    try {
+      await imapConnect(imap);
+
+      let mailboxName = mailbox;
+      if (acc.service === "daum" && mailbox === "INBOX") {
+        const boxes = await listBoxes(imap);
+        for (const c of DAUM_INBOX_CANDIDATES) {
+          if (boxes.includes(c)) { mailboxName = c; break; }
+        }
+      }
+      await openBox(imap, mailboxName);
+
+      const msg  = await fetchFullBody(imap, uid);
+      const body = msg.text
+        || (msg.html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        || "(본문 없음)";
+
+      const messageId = (msg.messageId || "").replace(/[<>]/g, "").trim();
+      const isEnglish = body.length > 20 &&
+        (body.match(/[a-zA-Z]/g) || []).length / Math.min(body.length, 500) > 0.6;
+
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            account:   acc.label,
+            uid,
+            from:      msg.from?.text || "",
+            subject:   msg.subject    || "",
+            date:      msg.date?.toISOString() || "",
+            isEnglish,
+            body:      body.substring(0, 5000),
+            webLink:   buildWebLink(acc.service, messageId),
+          }),
+        }],
+      };
+    } finally {
+      try { imap.end(); } catch {}
+    }
+  }
+);
+
+// ── Tool 4: last_run 리셋 ─────────────────────────────
+server.tool(
+  "reset_last_run",
+  "마지막 실행 시각 초기화 또는 특정 시각으로 설정합니다.",
+  {
+    account_label: z.string().default("all"),
+    set_to: z.string().default("").describe("ISO 8601. 비우면 24시간 전"),
+  },
+  async ({ account_label, set_to }) => {
+    const accounts = loadAccounts();
+    const targets  = account_label === "all"
+      ? accounts
+      : accounts.filter((a) => a.label === account_label || a.user === account_label);
+
+    const ts = set_to ? new Date(set_to) : (() => {
+      const d = new Date(); d.setHours(d.getHours() - 24); return d;
+    })();
+
+    targets.forEach((a) => updateLastRunFor(a.id, ts));
+    return {
+      content: [{
+        type: "text",
+        text: JSON.stringify({ updated: targets.map((a) => a.label), setTo: ts.toISOString() }),
+      }],
+    };
+  }
+);
+
+// ── Tool 5: 메일함 목록 ───────────────────────────────
+server.tool(
+  "list_mailboxes",
+  "IMAP 폴더 목록을 반환합니다. 다음 전체수신함 폴더명 확인에 유용합니다.",
+  { account_label: z.string() },
+  async ({ account_label }) => {
+    const acc = loadAccounts().find(
+      (a) => a.label === account_label || a.user === account_label
+    );
+    if (!acc) {
+      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음" }) }] };
+    }
+    const imap = makeImap(acc);
+    try {
+      await imapConnect(imap);
+      const boxes = await listBoxes(imap);
+      return { content: [{ type: "text", text: JSON.stringify({ mailboxes: boxes }) }] };
+    } finally {
+      try { imap.end(); } catch {}
+    }
+  }
+);
+
+// ══════════════════════════════════════════════════════
+//  실행
+// ══════════════════════════════════════════════════════
+const transport = new StdioServerTransport();
+await server.connect(transport);
