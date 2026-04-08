@@ -93,6 +93,6 @@ Write-Host ""
 Write-Host "  2. Fully close and restart Claude Desktop" -ForegroundColor White
 Write-Host ""
 Write-Host "  3. Ask Claude:" -ForegroundColor White
-Write-Host "     새 메일 확인해줘" -ForegroundColor Cyan
+Write-Host "     Ask: new emails, summarize, unread mail..." -ForegroundColor Cyan
 Write-Host ""
 Read-Host "Press Enter to exit"
