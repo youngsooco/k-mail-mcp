@@ -78,7 +78,7 @@ Supports: Windows, macOS, Linux. iOS/Android: not yet.
 Common issues:
 - IMAP auth error → wrong app password or IMAP not enabled
 - MCP missing in Claude Desktop → wrong path in config.json or not restarted
-- .master.key missing → run node setup.js first
+- .master.key missing → run setup.bat (Windows) or ./setup.sh (macOS) first
 - Windows path → double backslash in JSON required
 
 Rules: Korean only. Friendly, specific, numbered steps. Bug report: ask OS/Node.js version/error. Max 400 words. Do NOT say you are an AI.

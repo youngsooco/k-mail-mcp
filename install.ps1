@@ -94,7 +94,8 @@ Write-Host "============================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor White
 Write-Host "  1. Register mail account:" -ForegroundColor White
-Write-Host "     node setup.js" -ForegroundColor Cyan
+Write-Host "     setup.bat  (Windows)" -ForegroundColor Cyan
+Write-Host "     ./setup.sh  (macOS/Linux)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  2. Fully close and restart Claude Desktop" -ForegroundColor White
 Write-Host ""

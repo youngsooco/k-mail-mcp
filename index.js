@@ -34,7 +34,7 @@ function getInstanceId() {
 
 function loadKeyBuf() {
   if (!fs.existsSync(KEY_FILE))
-    throw new Error("마스터 키(.master.key) 없음 — node setup.js 먼저 실행");
+    throw new Error("마스터 키(.master.key) 없음 — setup.bat(Windows) 또는 ./setup.sh(macOS) 먼저 실행");
   return Buffer.from(fs.readFileSync(KEY_FILE, "utf-8").trim(), "hex");
 }
 
@@ -423,7 +423,7 @@ server.tool(
   async ({ account_label, override_since, max_per_account }) => {
     const allAccounts = loadAccounts();
     if (!allAccounts.length) {
-      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음. node setup.js 실행 필요" }) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ error: "계정 없음. setup.bat(Windows) 또는 ./setup.sh(macOS) 실행 필요" }) }] };
     }
 
     const targets = account_label === "all"
