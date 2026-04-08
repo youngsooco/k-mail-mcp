@@ -1,6 +1,8 @@
 # K-Mail-MCP Account Setup (PowerShell)
-# Read-Host -AsSecureString 으로 패스워드 완전 마스킹
+# Password input with masking via Read-Host -AsSecureString
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding            = [System.Text.Encoding]::UTF8
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Show-Header {
@@ -27,7 +29,10 @@ function Get-PlainText($secureString) {
 
 function Invoke-Worker($action, $data) {
     $json = $data | ConvertTo-Json -Compress
-    $result = $json | & node "$ScriptDir\setup-worker.js" $action 2>&1
+    # 환경변수로 전달 (파일/파이프 인코딩 문제 완전 우회)
+    $env:KMAIL_INPUT = $json
+    $result = & node "$ScriptDir\setup-worker.js" $action
+    $env:KMAIL_INPUT = $null
     return $result
 }
 
@@ -43,13 +48,13 @@ function Add-Account {
         return
     }
 
-    Write-Host "  [안내] 2단계 인증 사용 시: 보안 설정에서 별도 발급한 앱 비밀번호 입력" -ForegroundColor DarkGray
-    # 패스워드 2회 입력으로 오타 방지 (*** 완전 마스킹)
+    Write-Host "  [Note] If 2FA is enabled: use the app password from security settings, not your login password" -ForegroundColor DarkGray
+    # 2-step password input to prevent typos (*** masking)
     $matched = $false
     $pass = ""
     while (-not $matched) {
-        $secPass1 = Read-Host "  계정 비밀번호" -AsSecureString
-        $secPass2 = Read-Host "  계정 비밀번호 확인 (동일하게 입력)" -AsSecureString
+        $secPass1 = Read-Host "  Account password" -AsSecureString
+        $secPass2 = Read-Host "  Confirm password" -AsSecureString
         $p1 = Get-PlainText $secPass1
         $p2 = Get-PlainText $secPass2
         if ($p1 -ne $p2) {
@@ -69,7 +74,7 @@ function Add-Account {
     $data = @{ action="add"; service=$svc; email=$email; pass=$pass; label=$label }
     $result = Invoke-Worker "add" $data
 
-    # 패스워드 메모리에서 즉시 제거
+    # Immediately clear password from memory
     $pass = $null
     [GC]::Collect()
 
@@ -91,7 +96,7 @@ function Remove-Account {
     Write-Host $result -ForegroundColor Yellow
 }
 
-# ── Main ──────────────────────────────────────────────
+# Main
 Show-Header
 
 $running = $true

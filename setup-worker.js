@@ -58,8 +58,14 @@ function saveRaw(accounts) {
 const SVC_MAP   = { "1": "naver", "2": "daum", "3": "gmail", "4": "nate", "5": "yahoo", "6": "icloud" };
 const SVC_LABEL = { naver: "Naver", daum: "Daum/Kakao", gmail: "Gmail", nate: "Nate", yahoo: "Yahoo", icloud: "iCloud" };
 
-// ── stdin에서 JSON 읽기 ───────────────────────────────
-async function readStdin() {
+// ── 입력 읽기: 환경변수(Windows) 또는 stdin(macOS/Linux) ─────
+async function readInput() {
+  // setup.ps1이 환경변수로 전달 (인코딩 문제 완전 우회)
+  if (process.env.KMAIL_INPUT) {
+    try { return JSON.parse(process.env.KMAIL_INPUT); }
+    catch(e) { console.error("[ERROR] JSON parse failed:", e.message); return {}; }
+  }
+  // fallback: stdin (setup.sh 등)
   return new Promise((resolve) => {
     let data = "";
     process.stdin.setEncoding("utf-8");
@@ -75,7 +81,7 @@ async function readStdin() {
 async function main() {
   initInstance();
   const action = process.argv[2] || "list";
-  const input  = await readStdin();
+  const input  = await readInput();
   const keyBuf = loadKeyBuf();
 
   if (action === "add") {
