@@ -56,7 +56,7 @@ call_worker() {
 add_account() {
   echo ""
   echo -e "${YELLOW}-- Add / Update Account --${NC}"
-  echo "  1) Naver  2) Daum/Kakao  3) Gmail"
+  echo "  1) Naver  2) Daum/Kakao  3) Gmail  4) Nate  5) Yahoo  6) iCloud"
   printf "  Service: "
   read -r svc
 
@@ -68,7 +68,8 @@ add_account() {
     return
   fi
 
-  read_password "  App password: "
+  echo -e "  ${YELLOW}[안내] 2단계 인증 사용 시: 보안 설정에서 별도 발급한 앱 비밀번호 입력${NC}"
+  read_password "  계정 비밀번호: "
   local pass="$REPLY"
 
   printf "  Label (e.g. daum-personal): "

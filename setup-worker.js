@@ -55,8 +55,8 @@ function saveRaw(accounts) {
 }
 
 // ── 서비스명 매핑 ─────────────────────────────────────
-const SVC_MAP   = { "1": "naver", "2": "daum", "3": "gmail" };
-const SVC_LABEL = { naver: "Naver", daum: "Daum/Kakao", gmail: "Gmail" };
+const SVC_MAP   = { "1": "naver", "2": "daum", "3": "gmail", "4": "nate", "5": "yahoo", "6": "icloud" };
+const SVC_LABEL = { naver: "Naver", daum: "Daum/Kakao", gmail: "Gmail", nate: "Nate", yahoo: "Yahoo", icloud: "iCloud" };
 
 // ── stdin에서 JSON 읽기 ───────────────────────────────
 async function readStdin() {

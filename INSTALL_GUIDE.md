@@ -10,7 +10,7 @@
 - [Windows 설치](#windows-설치)
 - [macOS 설치](#macos-설치)
 - [iOS / Android](#ios--android)
-- [앱 비밀번호 발급 상세](#앱-비밀번호-발급-상세)
+- [계정 비밀번호 발급 상세](#앱-비밀번호-발급-상세)
 - [자주 겪는 문제](#자주-겪는-문제)
 
 ---
@@ -61,15 +61,18 @@ cd k-mail-mcp
 
 ---
 
-### Step 4 — 의존성 설치
+### Step 4 — 자동 설치 (권장)
 
-```powershell
-# k-mail-mcp 폴더 안에서 실행
-cd C:\Users\사용자명\k-mail-mcp
-npm install
-```
+폴더 안의 `install.bat`을 **더블클릭**하세요.
 
-`node_modules` 폴더가 생성되면 성공입니다.
+스크립트가 자동으로:
+- 패키지 설치 (`npm install`)
+- Claude Desktop 설정 파일 위치 탐색
+- `claude_desktop_config.json` 자동 업데이트
+
+완료 메시지에 **실제 설정 파일 경로**가 표시됩니다.
+
+> ℹ️ 수동 설치가 필요한 경우 [수동 설치 방법](#수동-설치-windows)을 참고하세요.
 
 ---
 
@@ -81,31 +84,53 @@ node setup.js
 
 메뉴가 뜨면 `1`을 눌러 계정을 추가합니다.
 
-```
-1) 계정 추가 / 수정   ← 여기 선택
-2) 계정 목록
-...
-```
-
 - 서비스 선택: `1` 네이버, `2` 다음/카카오, `3` Gmail
 - 이메일 주소 입력 (화면에 `***`로 표시됨)
-- 앱 비밀번호 입력 (화면에 `***`로 표시됨) — [발급 방법 보기](#앱-비밀번호-발급-상세)
+- 계정 비밀번호 입력 (화면에 `***`로 표시됨) — [발급 방법 보기](#imap-전용-비밀번호-발급-상세)
 - 별칭 입력 (예: `다음개인`, `네이버메일`)
-
-계정을 여러 개 추가하려면 `1`을 반복해서 선택하면 됩니다.
 
 ---
 
-### Step 6 — Claude Desktop 설정 파일 수정
+### Step 6 — Claude Desktop 재시작
 
-1. 파일 탐색기 열기
-2. 주소창에 `%APPDATA%\Claude` 입력 후 Enter
-3. `claude_desktop_config.json` 파일을 메모장으로 열기
+1. 시스템 트레이(오른쪽 하단 시계 옆)에서 Claude 아이콘 우클릭 → 종료
+2. Claude Desktop 다시 실행
+3. 새 대화창에서 확인:
 
-   > 파일이 없으면 새로 만드세요: 오른쪽 클릭 → 새로 만들기 → 텍스트 문서 → 이름을 `claude_desktop_config.json`으로 변경
+```
+"새 메일 확인해줘"
+```
 
-4. 아래 내용을 붙여넣기 (**경로는 본인 경로로 수정**):
+메일 목록이 뜨면 설치 완료입니다! 🎉
 
+---
+
+## 수동 설치 (Windows)
+
+`install.bat`이 동작하지 않는 경우 아래 방법으로 수동 설정하세요.
+
+**Step A — 패키지 설치**
+
+```powershell
+cd C:\Users\사용자명\k-mail-mcp
+npm install
+```
+
+**Step B — claude_desktop_config.json 수정**
+
+설정 파일 위치 탐색:
+```powershell
+# 탐색기 주소창에 입력
+%APPDATA%\Claude
+```
+
+파일이 없으면 PowerShell로 생성:
+```powershell
+New-Item -Path "$env:APPDATA\Claude" -ItemType Directory -Force
+notepad "$env:APPDATA\Claude\claude_desktop_config.json"
+```
+
+내용 입력 (경로는 실제 경로로 수정):
 ```json
 {
   "mcpServers": {
@@ -117,24 +142,9 @@ node setup.js
 }
 ```
 
-> ⚠️ **중요**: Windows 경로는 백슬래시(`\`)를 반드시 두 번(`\\`) 써야 합니다.  
-> 예: `C:\Users\영수\k-mail-mcp` → `C:\\Users\\영수\\k-mail-mcp`
+> ⚠️ Windows 경로는 백슬래시를 반드시 두 번(`\\`) 써야 합니다.
 
-5. 저장 후 파일 닫기
-
----
-
-### Step 7 — Claude Desktop 재시작
-
-1. 시스템 트레이(오른쪽 하단 시계 옆)에서 Claude 아이콘 우클릭 → 종료
-2. Claude Desktop 다시 실행
-3. 새 대화창에서 확인:
-
-```
-"새 메일 확인해줘"
-```
-
-메일 목록이 뜨면 설치 완료입니다! 🎉
+> ℹ️ **버전 업 시 주의**: Claude Desktop 업데이트 후 MCP가 사라지면 `install.bat`을 다시 실행하거나 위 파일 경로를 확인하세요. 설정 파일은 앱 업데이트와 별개로 유지됩니다.
 
 ---
 
@@ -244,7 +254,13 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 
 ---
 
-## 앱 비밀번호 발급 상세
+## 계정 비밀번호 안내
+
+**대부분의 경우 평소 로그인 비밀번호를 그대로 입력하면 됩니다.**
+
+2단계 인증(2FA) 사용 중인 경우에만 아래 절차로 앱 비밀번호를 별도 발급받아 입력하세요.
+
+### 2단계 인증 사용 중인 경우 — 앱 비밀번호 발급 방법
 
 ### 네이버 메일
 
@@ -257,7 +273,7 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 5. 같은 페이지 → `애플리케이션 비밀번호` → `애플리케이션 추가`
 6. 이름 입력 (예: `Claude`) → 추가
 7. **표시된 비밀번호를 바로 복사** (페이지를 벗어나면 다시 볼 수 없음)
-8. `node setup.js` → 네이버 선택 → 앱 비밀번호에 붙여넣기
+8. `node setup.js` → 네이버 선택 → 계정 비밀번호 입력란에 붙여넣기
 
 **네이버 IMAP 확인:**
 - [https://mail.naver.com](https://mail.naver.com) → 오른쪽 상단 `환경설정`
@@ -272,7 +288,7 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 3. `앱 비밀번호` → `앱 추가`
 4. 기기명 입력 (예: `Claude`) → 확인
 5. 표시된 비밀번호 복사
-6. `node setup.js` → 다음/카카오 선택 → 앱 비밀번호에 붙여넣기
+6. `node setup.js` → 다음/카카오 선택 → 계정 비밀번호 입력란에 붙여넣기
 
 **다음 IMAP 활성화 (필수):**
 - [https://mail.daum.net](https://mail.daum.net) 로그인
@@ -288,7 +304,30 @@ Claude 앱의 MCP 지원이 추가되면 업데이트할 예정입니다.
 3. 검색창에 `앱 비밀번호` 검색 → 클릭
 4. 앱 이름 입력 (예: `Claude`) → `만들기`
 5. 16자리 비밀번호 복사
-6. `node setup.js` → Gmail 선택 → 앱 비밀번호에 붙여넣기
+6. `node setup.js` → Gmail 선택 → 계정 비밀번호 입력란에 붙여넣기
+
+---
+
+## 네이트 / Yahoo / iCloud 계정 비밀번호
+
+### 네이트 메일
+1. 네이트 로그인 → 계정 설정 → 보안
+2. 2단계 인증 사용 중이라면: 앱 비밀번호 발급
+3. 2단계 인증 미사용: 로그인 비밀번호 그대로 입력
+
+### Yahoo 메일
+1. Yahoo 보안 설정 → 앱 비밀번호 생성
+2. 2단계 인증이 켜져 있는 경우 필수
+3. 2단계 인증 미사용: 로그인 비밀번호 그대로 입력
+
+> Yahoo IMAP 설정: `imap.mail.yahoo.com` / 포트 993 / SSL
+
+### iCloud 메일
+1. appleid.apple.com 로그인 → 로그인 및 보안
+2. 앱 전용 암호 → 암호 생성
+3. iCloud는 2단계 인증이 항상 켜져 있어 **앱 비밀번호 필수**
+
+> iCloud IMAP 설정: `imap.mail.me.com` / 포트 993 / SSL
 
 ---
 
@@ -328,27 +367,43 @@ node setup.js
 
 ### Claude Desktop에서 MCP가 보이지 않음
 
-1. `claude_desktop_config.json` 경로 재확인:
-   - Windows: `C:\Users\사용자명\AppData\Roaming\Claude\`
-   - macOS: `~/Library/Application Support/Claude/`
+**Step 1 — install.bat 재실행 (가장 빠름)**
 
-2. JSON 문법 확인 (온라인 JSON 검증기 활용: [jsonlint.com](https://jsonlint.com))
+`install.bat`을 다시 더블클릭하면 설정 파일을 자동으로 찾아 업데이트합니다.
 
-3. Windows 경로 백슬래시 이중화 확인:
+**Step 2 — 그래도 안 되면 수동 확인**
+
+1. 설정 파일 경로 확인:
+   - Windows 탐색기 주소창에 `%APPDATA%\Claude` 입력
+   - `claude_desktop_config.json` 파일 존재 여부 확인
+
+2. 파일 내용 확인 (메모장으로 열기):
    ```json
-   "args": ["C:\\Users\\영수\\k-mail-mcp\\index.js"]
+   {
+     "mcpServers": {
+       "k-mail-mcp": {
+         "command": "node",
+         "args": ["C:\\Users\\영수\\k-mail-mcp\\index.js"]
+       }
+     }
+   }
    ```
-   `\` 한 개가 아니라 `\\` 두 개여야 합니다.
+   Windows 경로는 백슬래시를 `\\` 두 번 써야 합니다.
 
-4. Claude Desktop 완전 종료 후 재시작 (시스템 트레이에서 종료)
+3. Claude Desktop 완전 종료 후 재시작 (시스템 트레이에서 종료)
+
+**Claude Desktop 업데이트 후 MCP 사라진 경우**
+
+`install.bat` 재실행으로 해결됩니다. 설정 파일(`claude_desktop_config.json`)은 앱 업데이트와 별개로 유지되지만 드물게 경로가 바뀔 수 있습니다. 스크립트가 새 경로를 자동 탐색합니다.
 
 ---
 
 ### IMAP 인증 오류 (인증 실패, 연결 거부 등)
 
-- 일반 로그인 비밀번호가 아닌 **앱 비밀번호**를 사용했는지 확인
+- 일반 로그인 비밀번호가 아닌 **계정 비밀번호**를 사용했는지 확인
+  (보안 설정 → 앱 비밀번호 메뉴에서 새로 발급한 비밀번호여야 함)
 - 각 서비스에서 IMAP이 활성화되어 있는지 확인
-- 앱 비밀번호를 재발급하고 `node setup.js` → 계정 수정으로 업데이트
+- 계정 비밀번호를 재발급하고 `node setup.js` → 계정 수정으로 업데이트
 
 ---
 

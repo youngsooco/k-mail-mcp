@@ -34,7 +34,7 @@ function Invoke-Worker($action, $data) {
 function Add-Account {
     Write-Host ""
     Write-Host "-- Add / Update Account --" -ForegroundColor Yellow
-    Write-Host "  1) Naver  2) Daum/Kakao  3) Gmail"
+    Write-Host "  1) Naver  2) Daum/Kakao  3) Gmail  4) Nate  5) Yahoo  6) iCloud"
     $svc = Read-Host "  Service"
 
     $email = Read-Host "  Email address"
@@ -43,12 +43,13 @@ function Add-Account {
         return
     }
 
+    Write-Host "  [안내] 2단계 인증 사용 시: 보안 설정에서 별도 발급한 앱 비밀번호 입력" -ForegroundColor DarkGray
     # 패스워드 2회 입력으로 오타 방지 (*** 완전 마스킹)
     $matched = $false
     $pass = ""
     while (-not $matched) {
-        $secPass1 = Read-Host "  App password" -AsSecureString
-        $secPass2 = Read-Host "  Confirm password" -AsSecureString
+        $secPass1 = Read-Host "  계정 비밀번호" -AsSecureString
+        $secPass2 = Read-Host "  계정 비밀번호 확인 (동일하게 입력)" -AsSecureString
         $p1 = Get-PlainText $secPass1
         $p2 = Get-PlainText $secPass2
         if ($p1 -ne $p2) {

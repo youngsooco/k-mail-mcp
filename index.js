@@ -83,9 +83,12 @@ function updateLastRunFor(id, ts = new Date()) {
 //  IMAP 프리셋
 // ══════════════════════════════════════════════════════
 const PRESETS = {
-  naver: { host: "imap.naver.com", port: 993, tls: true },
-  daum:  { host: "imap.daum.net",  port: 993, tls: true },
-  gmail: { host: "imap.gmail.com", port: 993, tls: true },
+  naver:  { host: "imap.naver.com",          port: 993, tls: true },
+  daum:   { host: "imap.daum.net",           port: 993, tls: true },
+  gmail:  { host: "imap.gmail.com",          port: 993, tls: true },
+  nate:   { host: "imap.nate.com",           port: 993, tls: true },
+  yahoo:  { host: "imap.mail.yahoo.com",     port: 993, tls: true },
+  icloud: { host: "imap.mail.me.com",        port: 993, tls: true },
 };
 
 const DAUM_INBOX_CANDIDATES = ["INBOX", "받은메일함", "전체메일"];
@@ -223,8 +226,11 @@ function buildWebLink(service, messageId) {
     // Gmail은 rfc822msgid로 특정 메일 직접 접근 가능
     return `https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
   }
-  if (service === "naver") return "https://mail.naver.com/";
-  if (service === "daum")  return "https://mail.daum.net/";
+  if (service === "naver")  return "https://mail.naver.com/";
+  if (service === "daum")   return "https://mail.daum.net/";
+  if (service === "nate")   return "https://mail.nate.com/";
+  if (service === "yahoo")  return "https://mail.yahoo.com/";
+  if (service === "icloud") return "https://www.icloud.com/mail/";
   return null;
 }
 
