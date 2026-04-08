@@ -167,8 +167,7 @@ async function main() {
       ? JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"))
       : {};
     if (settings.encApiKey) {
-      const preview = decrypt(settings.encApiKey, keyBuf).substring(0, 12) + "****";
-      console.log(T(`[활성] ${preview}`, `[active] ${preview}`));
+      console.log(T("[활성]", "[active]"));
     } else {
       console.log(T("[비활성]", "[disabled]"));
     }
