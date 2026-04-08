@@ -1,5 +1,5 @@
 /**
- * Korean Mail MCP Server v1.1.0
+ * Korean Mail MCP Server v1.1.1
  *
  * 지원: 네이버 / 다음 / Gmail / 네이트 / Yahoo / iCloud
  * 스팸 탐지 3단계:
@@ -530,7 +530,7 @@ async function collectNewMails(account, sinceTime) {
 // ══════════════════════════════════════════════════════
 //  MCP 서버
 // ══════════════════════════════════════════════════════
-const server = new McpServer({ name: "korean-mail-mcp", version: "1.1.0" });
+const server = new McpServer({ name: "korean-mail-mcp", version: "1.1.1" });
 
 // ── Tool 1: 계정 목록 ─────────────────────────────────
 server.tool(
