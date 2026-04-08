@@ -1,0 +1,27 @@
+# K-Mail-MCP — Git 줄바꿈 설정
+# Windows(CRLF) / macOS·Linux(LF) 혼용 환경에서 일관성 유지
+
+# 기본: 텍스트 파일은 저장소에 LF로 통일
+* text=auto eol=lf
+
+# 코드 파일 — 명시적으로 LF 강제
+*.js        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.sh        text eol=lf
+
+# Windows 배치 파일 — CRLF 유지 (Windows 전용)
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# 바이너리 파일 — 변환 안 함
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.zip       binary
+*.gz        binary
