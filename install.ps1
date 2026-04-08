@@ -12,6 +12,12 @@ Write-Host ""
 # Node.js 확인
 try {
     $nodeVer = & node --version 2>&1
+    # 버전 숫자 추출 (v20.1.0 → 20)
+    $verNum = [int]($nodeVer -replace "v(\d+)\..*", '$1')
+    if ($verNum -lt 18) {
+        Write-Host "[ERROR] Node.js $nodeVer is too old. Please install v18 or later from https://nodejs.org" -ForegroundColor Red
+        Read-Host "Press Enter to exit"; exit 1
+    }
     Write-Host "[OK] Node.js $nodeVer" -ForegroundColor Green
 } catch {
     Write-Host "[ERROR] Node.js not found. Install from https://nodejs.org" -ForegroundColor Red
