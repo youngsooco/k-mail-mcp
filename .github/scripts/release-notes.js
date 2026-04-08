@@ -27,7 +27,7 @@ function post(hostname, path, headers, body) {
 async function callClaude(system, user) {
   const r = await post("api.anthropic.com", "/v1/messages",
     { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    { model: "claude-sonnet-4-20250514", max_tokens: 1024, system, messages: [{ role: "user", content: user }] }
+    { model: "claude-sonnet-4-20250514", max_tokens: 2000, system, messages: [{ role: "user", content: user }] }
   );
   if (r.status !== 200) throw new Error(`Claude API ${r.status}: ${r.body}`);
   return JSON.parse(r.body).content?.[0]?.text || "생성 실패";

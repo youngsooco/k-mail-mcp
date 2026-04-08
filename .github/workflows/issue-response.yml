@@ -7,6 +7,8 @@ on:
 permissions:
   issues: write
   contents: read
+  pull-requests: none
+  actions: none
 
 jobs:
   respond:

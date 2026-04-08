@@ -12,6 +12,8 @@ on:
 permissions:
   pull-requests: write
   contents: read
+  issues: none
+  actions: none
 
 jobs:
   review:

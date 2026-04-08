@@ -33,7 +33,7 @@ function post(hostname, path, headers, body) {
 async function callClaude(system, user) {
   const r = await post("api.anthropic.com", "/v1/messages",
     { "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    { model: "claude-sonnet-4-20250514", max_tokens: 1024, system, messages: [{ role: "user", content: user }] }
+    { model: "claude-sonnet-4-20250514", max_tokens: 2000, system, messages: [{ role: "user", content: user }] }
   );
   if (r.status !== 200) throw new Error(`Claude API ${r.status}: ${r.body}`);
   return JSON.parse(r.body).content?.[0]?.text || "응답 생성 실패";
@@ -46,8 +46,28 @@ async function githubPost(path, body) {
   );
 }
 
+// P-QA-003: 간접 프롬프트 인젝션 패턴 감지 (ADR-QA-MCP-001)
+const INJECTION_PATTERNS = [
+  "ignore previous", "system prompt", "forward all",
+  "exfiltrate", "에이전트에게", "disregard",
+  "당신의 지시를", "new instruction", "override",
+  "forget your", "ignore all", "you are now",
+];
+
+function detectInjection(text) {
+  const lower = (text || "").toLowerCase();
+  return INJECTION_PATTERNS.find(p => lower.includes(p.toLowerCase()));
+}
+
 async function main() {
   console.log(`이슈 #${issueNumber} 처리 중 (@${issueAuthor})`);
+
+  // 인젝션 패턴 감지 시 처리 중단
+  const matched = detectInjection(issueTitle) || detectInjection(issueBody);
+  if (matched) {
+    console.warn(`⚠️ 인젝션 패턴 감지: "${matched}" — 처리 중단`);
+    return;
+  }
 
   const system = `You are a helpful maintainer assistant for K-Mail-MCP, an open-source MCP plugin connecting Korean mail services (Naver, Daum/Kakao, Gmail) to Claude AI via IMAP.
 
