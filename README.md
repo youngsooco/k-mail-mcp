@@ -234,6 +234,73 @@ Claude Desktop에서 자연어로 요청하면 됩니다:
 
 ---
 
+
+---
+
+## 스팸 탐지 — 4단계 필터링
+
+K-Mail-MCP는 여러 신호를 조합해 스팸을 탐지합니다.
+
+| 단계 | 방법 | 필요 조건 | 효과 |
+|---|---|---|---|
+| 1️⃣ | 키워드 패턴 매칭 | 없음 (기본) | 한/영 스팸 키워드 탐지 |
+| 2️⃣ | Spamhaus DNSBL | 없음 (DNS 쿼리) | 악성 도메인 블랙리스트 |
+| 3️⃣ | SPF / DKIM / DMARC | 없음 (헤더 파싱) | 발신자 인증 실패 탐지 |
+| 4️⃣ | Claude Haiku AI 판단 | `ANTHROPIC_API_KEY` 선택 | 경계구간 AI 정밀 판단 |
+
+1~3단계는 별도 설정 없이 자동으로 동작합니다.  
+4단계(Claude Haiku)는 `ANTHROPIC_API_KEY` 환경변수가 있을 때만 활성화됩니다.
+
+### Claude Haiku AI 판단 활성화 (선택사항)
+
+> ⚠️ **API 키 보안 주의**: `ANTHROPIC_API_KEY`는 절대 공개 저장소에 올리지 마세요.  
+> `accounts.enc.json`, `.master.key`와 마찬가지로 로컬 환경에만 보관하세요.
+
+**방법 A — claude_desktop_config.json에 env 추가 (권장)**
+
+```json
+{
+  "mcpServers": {
+    "k-mail-mcp": {
+      "command": "node",
+      "args": ["C:\\workspace\\korean-mail-mcp\\index.js"],
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-api..."
+      }
+    }
+  }
+}
+```
+
+**방법 B — Windows 사용자 환경변수 등록**
+
+```powershell
+[System.Environment]::SetEnvironmentVariable(
+  'ANTHROPIC_API_KEY', 'sk-ant-api...', 'User'
+)
+# 적용 후 Claude Desktop 재시작 필요
+```
+
+**방법 C — macOS / Linux**
+
+```bash
+# ~/.zshrc 또는 ~/.bashrc 에 추가
+export ANTHROPIC_API_KEY="sk-ant-api..."
+source ~/.zshrc
+```
+
+키가 없으면 1~3단계만 동작하며, 이것만으로도 일반적인 스팸의 대부분을 잡을 수 있습니다.
+
+### 스팸 점수 구조
+
+```
+spamScore = 패턴점수 + 인증점수(SPF/DKIM/DMARC) + DNSBL점수 ± AI조정
+isSpam    = spamScore >= 70
+```
+
+각 메일의 `spamSignals` 필드에서 어떤 신호로 탐지됐는지 확인할 수 있습니다.
+
+---
 ## 데이터 흐름 및 보안
 
 ```
