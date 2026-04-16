@@ -1,5 +1,5 @@
 /**
- * Korean Mail MCP Server v1.3.0
+ * Korean Mail MCP Server v1.4.1
  *
  * 지원: 네이버 / 다음 / Gmail / 네이트 / Yahoo / iCloud
  * 스팸 탐지 4단계:
@@ -1067,8 +1067,26 @@ if (HTTP_PORT) {
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
+  // ── OAuth metadata 오버라이드 (BASE_URL path 보정) ────────────────
+  // MCP SDK mcpAuthRouter는 issuerUrl.origin만 사용해 엔드포인트를 생성하므로
+  // BASE_URL이 /kmail 등 경로를 포함할 때 authorization_endpoint 등이 깨짐.
+  // express 라우트 등록 순서상 이 핸들러가 먼저 매칭되어 올바른 경로 포함 메타데이터 반환.
+  app.get("/.well-known/oauth-authorization-server", (_req, res) => {
+    res.json({
+      issuer:                             BASE_URL,
+      authorization_endpoint:             `${BASE_URL}/authorize`,
+      token_endpoint:                     `${BASE_URL}/token`,
+      registration_endpoint:              `${BASE_URL}/register`,
+      revocation_endpoint:                `${BASE_URL}/revoke`,
+      response_types_supported:           ["code"],
+      code_challenge_methods_supported:   ["S256"],
+      token_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+      grant_types_supported:              ["authorization_code"],
+    });
+  });
+
   // ── OAuth 2.0 엔드포인트 ─────────────────────────────
-  // /.well-known/oauth-authorization-server, /authorize, /token, /register, /revoke
+  // /authorize, /token, /register, /revoke (/.well-known/은 위 오버라이드로 처리)
   app.use(mcpAuthRouter({
     provider,
     issuerUrl,
