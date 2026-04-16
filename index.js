@@ -1063,6 +1063,9 @@ if (HTTP_PORT) {
   });
 
   const app = express();
+  // nginx reverse proxy 신뢰 설정 — X-Forwarded-For 헤더 인식
+  // 미설정 시 MCP SDK 내부 express-rate-limit이 ValidationError를 throw해 400 반환
+  app.set("trust proxy", 1);
   // express.json() + urlencoded() — MCP /token 핸들러 및 OAuth 폼 파싱에 필요
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -1160,7 +1163,7 @@ if (HTTP_PORT) {
 
   await server.connect(transport);
   app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.error(`[k-mail-mcp] v1.4.3 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
+    console.error(`[k-mail-mcp] v1.4.4 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
     console.error(`  issuer:   ${BASE_URL}`);
     console.error(`  MCP:      ${BASE_URL}/mcp`);
     console.error(`  metadata: ${BASE_URL}/.well-known/oauth-authorization-server`);

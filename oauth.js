@@ -11,7 +11,7 @@
 
 import crypto from "node:crypto";
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30일
 const CODE_TTL_MS  =  5 * 60 * 1000;       // 5min
 
 // ══════════════════════════════════════════════════════
