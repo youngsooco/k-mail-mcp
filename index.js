@@ -1090,9 +1090,14 @@ if (HTTP_PORT) {
   // OAuth 서버 위치를 자동 발견하는 데 필요. 이 엔드포인트가 없으면
   // "Missing Authorization header" 오류와 함께 OAuth 플로우 시작 불가.
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+    // authorization_servers는 domain root(origin)를 사용해야 함 (CAI 구 스펙 2025-03-26 호환).
+    // CAI는 authorization_server URL에서 path를 제거하고 root에서 OAuth 메타데이터를 탐색.
+    // BASE_URL(/kmail 포함)로 설정 시 CAI가 /.well-known/oauth-authorization-server/kmail 같은
+    // 잘못된 경로를 구성해 404를 받고 OAuth 실패.
+    const issuerOrigin = new URL(BASE_URL).origin;
     res.json({
       resource:                           BASE_URL,
-      authorization_servers:              [BASE_URL],
+      authorization_servers:              [issuerOrigin],
       bearer_methods_supported:           ["header"],
       resource_documentation:             `${BASE_URL}/.well-known/oauth-authorization-server`,
     });
@@ -1155,7 +1160,7 @@ if (HTTP_PORT) {
 
   await server.connect(transport);
   app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.error(`[k-mail-mcp] v1.4.2 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
+    console.error(`[k-mail-mcp] v1.4.3 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
     console.error(`  issuer:   ${BASE_URL}`);
     console.error(`  MCP:      ${BASE_URL}/mcp`);
     console.error(`  metadata: ${BASE_URL}/.well-known/oauth-authorization-server`);
