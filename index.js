@@ -1031,7 +1031,90 @@ server.tool("set_watched_mailboxes",
 );
 
 // ══════════════════════════════════════════════════════
-// 실행
+// 실행 — stdio (기본) 또는 HTTP+OAuth2 (MAIL_MCP_HTTP_PORT 설정 시)
 // ══════════════════════════════════════════════════════
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const HTTP_PORT = parseInt(process.env.MAIL_MCP_HTTP_PORT || "0", 10);
+
+if (HTTP_PORT) {
+  // ── HTTP MCP + OAuth 2.0 모드 (CF Tunnel / claude.ai custom connector) ───
+  const [
+    { default: express },
+    { mcpAuthRouter },
+    { requireBearerAuth },
+    { StreamableHTTPServerTransport },
+    { randomUUID },
+    { KMailOAuthProvider, errorPage },
+  ] = await Promise.all([
+    import("express"),
+    import("@modelcontextprotocol/sdk/server/auth/router.js"),
+    import("@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js"),
+    import("@modelcontextprotocol/sdk/server/streamableHttp.js"),
+    import("node:crypto"),
+    import("./oauth.js"),
+  ]);
+
+  const API_KEY  = process.env.MCP_API_KEY || process.env.MAIL_MCP_API_KEY || "";
+  const BASE_URL = (process.env.MAIL_MCP_BASE_URL || `http://localhost:${HTTP_PORT}`).replace(/\/$/, "");
+  const issuerUrl = new URL(BASE_URL);
+
+  const provider  = new KMailOAuthProvider(API_KEY);
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+
+  const app = express();
+  // express.json() + urlencoded() — MCP /token 핸들러 및 OAuth 폼 파싱에 필요
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
+
+  // ── OAuth 2.0 엔드포인트 ─────────────────────────────
+  // /.well-known/oauth-authorization-server, /authorize, /token, /register, /revoke
+  app.use(mcpAuthRouter({
+    provider,
+    issuerUrl,
+    baseUrl: issuerUrl,
+    resourceName: "k-mail-mcp",
+    scopesSupported: [],
+  }));
+
+  // ── API 키 폼 제출 핸들러 ────────────────────────────
+  // GET /authorize → loginPage HTML → POST /oauth/submit-key
+  app.post("/oauth/submit-key", async (req, res) => {
+    const { redirect_uri, state, code_challenge, client_id, api_key } = req.body;
+    try {
+      const redirectTo = await provider.handleKeySubmit({
+        clientId:      client_id,
+        redirectUri:   redirect_uri,
+        state:         state || "",
+        codeChallenge: code_challenge,
+        providedKey:   api_key,
+      });
+      res.redirect(redirectTo);
+    } catch (err) {
+      console.error("[oauth] 키 제출 오류:", err.message);
+      res.status(401).type("html").send(errorPage(err.message));
+    }
+  });
+
+  // ── MCP 엔드포인트 (/mcp) ────────────────────────────
+  // Bearer 토큰 필수 (verifyAccessToken via KMailOAuthProvider)
+  const bearerAuth = requireBearerAuth({ verifier: provider });
+
+  app.all("/mcp", bearerAuth, async (req, res) => {
+    // req.body는 express.json()이 이미 파싱 — POST 이외 메서드는 undefined
+    await transport.handleRequest(req, res, req.body);
+  });
+
+  await server.connect(transport);
+  app.listen(HTTP_PORT, "0.0.0.0", () => {
+    console.error(`[k-mail-mcp] v1.4.0 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
+    console.error(`  issuer:   ${BASE_URL}`);
+    console.error(`  MCP:      ${BASE_URL}/mcp`);
+    console.error(`  metadata: ${BASE_URL}/.well-known/oauth-authorization-server`);
+    if (!API_KEY) console.error("[k-mail-mcp] ⚠️  MCP_API_KEY 미설정 — 인증 없음");
+  });
+} else {
+  // ── stdio 모드 (Claude Desktop 로컬 전용) ─────────────────────────────────
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
