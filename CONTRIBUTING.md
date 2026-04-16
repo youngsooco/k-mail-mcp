@@ -148,6 +148,69 @@ refactor: 코드 리팩토링
 
 ---
 
+## Git 릴리즈 정책 (Release Policy)
+
+> **핵심 원칙: 검증 완료된 버전만 릴리즈한다.**
+
+### 시맨틱 버저닝 (Semantic Versioning)
+
+`MAJOR.MINOR.PATCH` 형식을 엄격히 따릅니다.
+
+| 구분 | 증가 조건 | 예시 |
+|------|----------|------|
+| `PATCH` (x.x.**1**) | 버그픽스 (동작 변경 없음) | `v1.4.5 → v1.4.6` |
+| `MINOR` (x.**1**.x) | 새 기능 추가 (하위 호환) | `v1.4.x → v1.5.0` |
+| `MAJOR` (**1**.x.x) | 호환성 깨지는 변경 | `v1.x.x → v2.0.0` |
+
+### 릴리즈 전 필수 체크리스트
+
+태그를 push하기 전 **모든 항목을 확인**하세요:
+
+```
+□ 핵심 기능이 실제 환경에서 동작 확인됨
+  □ Claude Desktop stdio 모드: check_new_mails 정상 동작
+  □ HTTP OAuth 모드: OAuth 플로우 완료 + MCP tool 실행 성공
+□ 대상 플랫폼(Windows)에서 install.bat + setup.bat 실행 확인
+□ README.md 버전 번호 업데이트
+□ package.json 버전 번호 업데이트
+```
+
+### 태그 및 릴리즈 절차
+
+```bash
+# 1. package.json 버전 업데이트 + README 버전 배지 업데이트
+# 2. 로컬 검증 완료 확인
+# 3. 커밋
+git commit -m "chore: bump version to v1.x.x"
+
+# 4. 태그 생성 + push (GitHub Actions가 자동으로 Release 생성)
+git tag -a v1.x.x -m "v1.x.x — <변경 요약>"
+git push origin main
+git push origin v1.x.x
+```
+
+### 탐색 중인 버전 처리 (Pre-release)
+
+기능 개발 중 중간 단계는 **커밋만 하고 태그를 붙이지 않습니다.**
+외부에 공유가 필요한 경우에만 pre-release 태그를 사용합니다:
+
+```bash
+# pre-release (GitHub에 "Pre-release"로 표시됨 — 안정 버전이 아님을 명시)
+git tag -a v1.5.0-rc.1 -m "v1.5.0-rc.1 — 테스트용, 프로덕션 사용 비권장"
+```
+
+### 잘못된 릴리즈 처리
+
+실수로 버그가 있는 버전을 릴리즈한 경우:
+
+```bash
+# 해당 릴리즈를 GitHub에서 Pre-release로 변경하거나 삭제
+# 수정 후 PATCH 버전 올려서 재릴리즈
+# (태그 삭제는 이미 다운로드한 사용자에게 혼란을 주므로 신중하게)
+```
+
+---
+
 ### 문서 기여
 
 설치 중 막혔던 부분, 이해가 어려웠던 부분이 있으면  
