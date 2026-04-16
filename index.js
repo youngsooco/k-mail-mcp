@@ -1058,9 +1058,6 @@ if (HTTP_PORT) {
   const issuerUrl = new URL(BASE_URL);
 
   const provider  = new KMailOAuthProvider(API_KEY);
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
 
   const app = express();
   // nginx reverse proxy 신뢰 설정 — X-Forwarded-For 헤더 인식
@@ -1156,14 +1153,30 @@ if (HTTP_PORT) {
     bearerAuth(req, res, next);
   };
 
-  app.all("/mcp", bearerAuthWithMeta, async (req, res) => {
-    // req.body는 express.json()이 이미 파싱 — POST 이외 메서드는 undefined
-    await transport.handleRequest(req, res, req.body);
+  // ── MCP 엔드포인트 — Stateless 모드 (요청별 transport) ──────────────
+  // CAI 백엔드는 로드밸런싱(160.79.106.35 ↔ .37)되어 initialize와 tool call이
+  // 다른 인스턴스에서 옴. Stateful 세션이면 세션 ID 불일치 → 400.
+  // 요청별 새 transport 생성(sessionIdGenerator: undefined)으로 해결.
+  app.post("/mcp", bearerAuthWithMeta, async (req, res) => {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // stateless — 세션 ID 불필요
+    });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } finally {
+      // 응답 완료 후 transport 정리 (server는 재사용)
+      res.on("finish", () => transport.close().catch(() => {}));
+    }
   });
 
-  await server.connect(transport);
+  // GET /mcp — Stateless 모드에서 SSE 서버 푸시 미지원 → 405
+  app.get("/mcp", (_req, res) => {
+    res.status(405).json({ error: "Method Not Allowed", message: "Stateless mode: SSE not supported" });
+  });
+
   app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.error(`[k-mail-mcp] v1.4.4 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
+    console.error(`[k-mail-mcp] v1.4.5 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
     console.error(`  issuer:   ${BASE_URL}`);
     console.error(`  MCP:      ${BASE_URL}/mcp`);
     console.error(`  metadata: ${BASE_URL}/.well-known/oauth-authorization-server`);
