@@ -290,7 +290,7 @@ function loginPage({ clientName, redirectUri, state, codeChallenge, clientId }) 
       >
       <button type="submit">연결 허용</button>
     </form>
-    <p class="note">이 연결은 24시간 유효합니다.<br>API 키는 서버에 저장되지 않습니다.</p>
+    <p class="note">이 연결은 30일간 유효합니다.<br>API 키는 서버에 저장되지 않습니다.</p>
   </div>
 </body>
 </html>`;
