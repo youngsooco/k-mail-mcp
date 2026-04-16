@@ -1085,6 +1085,19 @@ if (HTTP_PORT) {
     });
   });
 
+  // ── OAuth Protected Resource Metadata (RFC 9728) ─────────────────
+  // CAI 등 MCP 클라이언트가 WWW-Authenticate 헤더의 resource_metadata URL을 탐색해
+  // OAuth 서버 위치를 자동 발견하는 데 필요. 이 엔드포인트가 없으면
+  // "Missing Authorization header" 오류와 함께 OAuth 플로우 시작 불가.
+  app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+    res.json({
+      resource:                           BASE_URL,
+      authorization_servers:              [BASE_URL],
+      bearer_methods_supported:           ["header"],
+      resource_documentation:             `${BASE_URL}/.well-known/oauth-authorization-server`,
+    });
+  });
+
   // ── OAuth 2.0 엔드포인트 ─────────────────────────────
   // /authorize, /token, /register, /revoke (/.well-known/은 위 오버라이드로 처리)
   app.use(mcpAuthRouter({
@@ -1118,17 +1131,35 @@ if (HTTP_PORT) {
   // Bearer 토큰 필수 (verifyAccessToken via KMailOAuthProvider)
   const bearerAuth = requireBearerAuth({ verifier: provider });
 
-  app.all("/mcp", bearerAuth, async (req, res) => {
+  // resource_metadata를 포함한 401 응답 미들웨어 (RFC 9728 §3)
+  // CAI 등 클라이언트가 resource_metadata URL을 탐색해 OAuth 서버를 자동 발견.
+  const resourceMetadataUrl = `${BASE_URL}/.well-known/oauth-protected-resource`;
+  const bearerAuthWithMeta = (req, res, next) => {
+    const origJson = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode === 401) {
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer realm="k-mail-mcp", resource_metadata="${resourceMetadataUrl}"`,
+        );
+      }
+      return origJson(body);
+    };
+    bearerAuth(req, res, next);
+  };
+
+  app.all("/mcp", bearerAuthWithMeta, async (req, res) => {
     // req.body는 express.json()이 이미 파싱 — POST 이외 메서드는 undefined
     await transport.handleRequest(req, res, req.body);
   });
 
   await server.connect(transport);
   app.listen(HTTP_PORT, "0.0.0.0", () => {
-    console.error(`[k-mail-mcp] v1.4.0 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
+    console.error(`[k-mail-mcp] v1.4.2 OAuth2 MCP 서버 시작 — port ${HTTP_PORT}`);
     console.error(`  issuer:   ${BASE_URL}`);
     console.error(`  MCP:      ${BASE_URL}/mcp`);
     console.error(`  metadata: ${BASE_URL}/.well-known/oauth-authorization-server`);
+    console.error(`  resource: ${BASE_URL}/.well-known/oauth-protected-resource`);
     if (!API_KEY) console.error("[k-mail-mcp] ⚠️  MCP_API_KEY 미설정 — 인증 없음");
   });
 } else {
