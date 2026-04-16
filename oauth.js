@@ -81,8 +81,15 @@ export class KMailOAuthProvider {
    * 실패: Error throw
    */
   async handleKeySubmit({ clientId, redirectUri, state, codeChallenge, providedKey }) {
-    if (this.#apiKey && providedKey !== this.#apiKey) {
-      throw new Error("잘못된 API 키입니다.");
+    // [SECURITY] API 키 타이밍 공격 방지 — crypto.timingSafeEqual 사용
+    if (this.#apiKey) {
+      const expected = Buffer.alloc(64); // 고정 64바이트 — UUID/토큰 길이 충분
+      const provided = Buffer.alloc(64);
+      Buffer.from(this.#apiKey, "utf-8").copy(expected);
+      Buffer.from(String(providedKey ?? ""), "utf-8").copy(provided);
+      if (!crypto.timingSafeEqual(expected, provided)) {
+        throw new Error("잘못된 API 키입니다.");
+      }
     }
     if (!codeChallenge) {
       throw new Error("code_challenge 누락 — PKCE 필수");
@@ -90,6 +97,12 @@ export class KMailOAuthProvider {
 
     const client = await this.clientsStore.getClient(clientId);
     if (!client) throw new Error("등록되지 않은 클라이언트");
+
+    // [SECURITY] Open Redirect 방지 — redirect_uri를 등록된 URI 목록에서 재검증
+    // GET /authorize의 SDK 검증을 우회한 직접 POST 공격 차단
+    if (!Array.isArray(client.redirect_uris) || !client.redirect_uris.includes(redirectUri)) {
+      throw new Error("등록되지 않은 redirect_uri");
+    }
 
     const code = crypto.randomUUID();
     this.#codes.set(code, {
